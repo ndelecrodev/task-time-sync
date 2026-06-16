@@ -1,4 +1,4 @@
-# Project Performance Dashboard
+# Spreadsheet Automation Project
 
 Sistema completo de gestão e análise de performance de equipe utilizando o Excel como dashboard principal, integrado com dados de tarefas (Jira) e controle de horas via automação em Python.
 
