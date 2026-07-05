@@ -2,3 +2,5 @@ requests
 pytest
 openpyxl
 pydantic-settings
+python-dotenv
+pydantic[email]
