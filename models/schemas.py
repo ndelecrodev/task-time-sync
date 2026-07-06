@@ -16,6 +16,13 @@ class StatusPrazo(Enum):
     NO_PRAZO = "No prazo"
     SEM_PRAZO = "Sem Prazo"
 
+class TypeTask(str, Enum):
+    BUG = "Bug"
+    TASK = "Task"
+    STORY = "Story"
+    EPIC = "Epic"
+    SUBTASK = "Subtask"
+
 class Tarefa(BaseModel):
     id: str
     title: str 
@@ -23,9 +30,13 @@ class Tarefa(BaseModel):
     prioridade: Prioridade
     status: str
     area: str | None = None
-    data_inicio: date | None = None
+    data_criacao: date 
     prazo: date | None = None
     data_conclusao:  date | None = None
+    tipo: TypeTask
+    criador: str | None = None
+    data_atualizacao: date | None = None
+    etiquetas: list[str] = Field(default_factory=list)
 
     @computed_field
     @property
@@ -76,3 +87,15 @@ class Area(BaseModel):
 class FuncionarioArea(BaseModel):
     id_funcionario: int 
     id_area: int
+
+class Etiqueta(BaseModel):
+    id_etiqueta: int
+    nome_etiqueta: str
+
+class TarefaEtiqueta(BaseModel):
+    id_tarefa: str
+    id_etiqueta: int
+
+class DetalheTarefa(BaseModel):
+    id_tarefa: str
+    descricao: str | None = None
