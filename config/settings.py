@@ -5,7 +5,7 @@ class Settings(BaseSettings):
     model_config = {"env_file": ".env"} # Diz onde o pydantic irá procurar as váriaveis de ambiente 
     URL_JIRA: str
     JIRA_EMAIL: str
-    JIRA_TOKEN: str
+    JIRA_API_TOKEN: str
     API_KEY_CLOCKIFY: str
     WORKSPACE_ID: str
     EXCEL_WAY: str
