@@ -11,10 +11,11 @@ class JiraClient:
     def __init__(self) -> None:
         self.url_base = settings.URL_JIRA
         self.auth = (settings.JIRA_EMAIL, settings.JIRA_API_TOKEN)
+        self.jira_customfield_area = settings.JIRA_CUSTOMFIELD_AREA
         self.session = requests.Session()
     
     def _montar_parametro(self, jql: str, token:str | None=None) -> dict:
-        fields = "summary,assignee,priority,status,issuetype,creator,created,updated,duedate,resolutiondate,labels,description"
+        fields = f"summary,assignee,priority,status,issuetype,creator,created,updated,duedate,resolutiondate,labels,description,{self.jira_customfield_area}"
         params = {
             "jql":jql,
             "maxResults": 100,

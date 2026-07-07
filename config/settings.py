@@ -12,5 +12,6 @@ class Settings(BaseSettings):
     ALERT_DAYS_LOW: int = Field(default=3, description="Dias para o alerta de prioridade baixa")
     ALERT_DAYS_HIGH: int = Field(default=5, description="Dias para o alerta de prioridade alta")
     WORKSPACE_NAME: str | None = None
+    JIRA_CUSTOMFIELD_AREA: str
 
 settings = Settings()
