@@ -1,5 +1,0 @@
-não esquecer das docs strings 
-
-Quando for pedir para o claude code renomear os métodos/funções e as variaveis para inglês, falar para se ele não usar para nome uma palavra que seja igual a algo que possa ser confundido com alguma coisa do python
-
-adicionar mais 3 horas e completar se tiver faltando tanto para dar uma hora inteira

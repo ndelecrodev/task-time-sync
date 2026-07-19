@@ -2,7 +2,7 @@ from typing import NamedTuple
 from config.settings import settings
 import requests
 
-class PaginaResposta(NamedTuple):
+class PageResponse(NamedTuple):
         issues: list[dict]
         is_last: bool
         next_token: str | None
@@ -25,11 +25,11 @@ class JiraClient:
             params["nextPageToken"] = token
         return params
 
-    def _buscar_pagina(self, params: dict) -> PaginaResposta:
+    def _buscar_pagina(self, params: dict) -> PageResponse:
         resp = self.session.get(url=f"{self.url_base}/rest/api/3/search/jql", auth=self.auth, params=params, timeout=10)
         resp.raise_for_status()
         data = resp.json()
-        return PaginaResposta(
+        return PageResponse(
         issues=data["issues"], 
         is_last=data["isLast"],
         next_token=data.get("nextPageToken")
