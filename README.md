@@ -1,3 +1,5 @@
+[English version](docs/en/readme.md)
+
 # SOP Pipeline
 
 Pipeline em Python que consolida **Jira** (tarefas) e **Clockify** (horas
