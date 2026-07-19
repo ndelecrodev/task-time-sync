@@ -1,0 +1,17 @@
+# Detectar e normalizar finais de linha automaticamente
+* text=auto
+
+# Forçar LF explicitamente para arquivos de texto
+*.py eol=lf
+*.md eol=lf
+*.toml eol=lf
+*.cfg eol=lf
+*.txt eol=lf
+*.yml eol=lf
+*.yaml eol=lf
+*.json eol=lf
+.gitignore eol=lf
+.gitattributes eol=lf
+
+# Marcar arquivos binários
+*.xlsx binary
