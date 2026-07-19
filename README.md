@@ -1,116 +1,176 @@
-# Spreadsheet Automation Project
+# SOP Pipeline
 
-Sistema completo de gestão e análise de performance de equipe utilizando o Excel como dashboard principal, integrado com dados de tarefas (Jira) e controle de horas via automação em Python.
+Pipeline em Python que consolida **Jira** (tarefas) e **Clockify** (horas
+apontadas) em uma planilha Excel hospedada no **Backblaze B2**, e avisa o time no
+**Microsoft Teams** sobre tarefas com prazo próximo do vencimento.
 
-## Funcionalidades
+A planilha não é um dump: ela é o produto final, com tabelas, fórmulas e abas de
+indicadores. O pipeline faz *upsert* nas tabelas de dados e deixa as colunas
+calculadas para as fórmulas do próprio Excel.
 
-* Controle de tarefas por colaborador: Acompanhamento detalhado do ciclo de vida de cada atividade atribuída.
-* Monitoramento de horas trabalhadas: Registro e consolidação do tempo alocado pela equipe.
-* Dashboard visual com KPIs: Painel gerencial e dinâmico focado em métricas estratégicas.
-* Cálculo de produtividade automática: Processamento automático de indicadores de eficiência baseados em entregas versus tempo.
-* Identificação de tarefas atrasadas: Alertas visuais e marcas automáticas para atividades fora do prazo.
-* Gestão de prazos e status: Visão holística de cronogramas e gargalos operacionais.
-* Integração com Jira (via Python): Sincronização automatizada da base de dados sem necessidade de exportações manuais.
+---
 
-## Arquitetura do Projeto
+## Visão geral do fluxo
 
-O ecossistema é dividido em uma camada de processamento e extração de dados (Backend) e uma camada de visualização e cálculo analítico (Frontend).
+```
+                         ┌──────────────┐
+                         │ Backblaze B2 │
+                         └──────┬───────┘
+                       download │      ▲ upload
+                                ▼      │
+   ┌──────────┐            ┌───────────┴─────────────┐
+   │ Jira API ├───issues──▶│                         │
+   └──────────┘            │   EtlService            │
+                           │   (valida + normaliza)  │
+   ┌──────────┐            │                         │
+   │ Clockify ├──entries──▶│                         │
+   └──────────┘            └───────────┬─────────────┘
+                                       │ Task / TimeEntry / TaskDetail
+                                       ▼
+                              ┌─────────────────┐
+                              │   ExcelWriter   │
+                              │  (.xlsx local)  │
+                              └────────┬────────┘
+                                       │ tasks
+                                       ▼
+                              ┌─────────────────┐     ┌────────────┐
+                              │  AlertService   ├────▶│  Notifier  │
+                              │ (regra de prazo)│     │  (Teams)   │
+                              └─────────────────┘     └────────────┘
+```
 
-### Excel (Frontend / Dashboard)
-O arquivo de planilhas é estruturado em tabelas isoladas para garantir a integridade e escalabilidade dos dados:
-* DASHBOARD: Visualização executiva com KPIs centralizados e gráficos dinâmicos.
-* CALCULOS: Motor interno que processa as métricas segmentadas por pessoa.
-* BASE_TAREFAS: Repositório bruto dos dados extraídos do Jira.
-* BASE_HORAS: Controle estruturado do ponto ou horas alocadas.
-* DIM_FUNCIONARIOS: Tabela dimensional com dados cadastrais dos colaboradores.
-* DETALHES_TAREFA: Descrições detalhadas e metadados adicionais das tarefas.
+Detalhes em [`docs/architecture.md`](docs/architecture.md),
+[`docs/data-model.md`](docs/data-model.md) e
+[`docs/design-decisions.md`](docs/design-decisions.md).
 
-### Python (Backend)
-Scripts responsáveis pela automação do pipeline de dados:
-* Conexão segura e extração de dados via API do Jira.
-* Processamento, limpeza e tratamento de dados em memória.
-* Carga e atualização automática do Excel mapeando as abas de dados correspondentes.
+---
 
-## Fluxo de Dados
+## Arquitetura de pastas
 
-O ciclo de vida do dado percorre o seguinte fluxo linear de transformação:
+| Caminho | Responsabilidade |
+|---|---|
+| `main.py` | Entrypoint fino; só chama `sop_pipeline.pipeline.run()`. |
+| `src/sop_pipeline/pipeline.py` | Orquestra a execução: download → sync → upload → alertas. |
+| `src/sop_pipeline/clients/` | Clientes HTTP das APIs externas (Jira, Clockify). Só falam HTTP; não interpretam regra de negócio. |
+| `src/sop_pipeline/services/` | Regra de negócio: `EtlService` (transformação/validação) e `AlertService` (quem merece alerta). |
+| `src/sop_pipeline/integrations/` | Saídas do pipeline: `ExcelWriter` (planilha), `Notifier` (Teams), `StorageClient` (B2). |
+| `src/sop_pipeline/models/` | Modelos Pydantic (`Task`, `TimeEntry`, `TaskDetail`) e enums. |
+| `src/sop_pipeline/config/` | Carregamento e validação das variáveis de ambiente. |
+| `src/sop_pipeline/errors/` | Exceções de negócio do projeto. |
+| `tests/` | Espelha a estrutura de `src/sop_pipeline/`. |
+| `docs/` | Documentação de arquitetura, modelo de dados e decisões de design. |
 
-Jira (Origem) -> Python (Ingestão/Tratamento) -> Excel Base (Carga) -> Dashboard (Visualização/KPIs)
+---
 
-## Principais Métricas
+## Instalação
 
-O sistema consolida e apresenta em tempo real os seguintes indicadores:
-* Tarefas totais: Volumetria geral do backlog e sprint.
-* Tarefas concluídas: Volume de entregas finalizadas com sucesso.
-* Tarefas atrasadas: Quantidade de itens com prazo expirado em relação à data atual.
-* Horas trabalhadas: Total de esforço temporal registrado pela equipe.
-* Produtividade: Métrica calculada através da relação de tarefas concluídas por hora.
-* Percentual de conclusão: Progresso percentual do projeto (concluídas / total).
+Requer **Python 3.11+**.
 
-## Estrutura de Dados
+```bash
+python -m venv .venv
 
-### BASE_TAREFAS
-| Campo | Descrição |
-| :--- | :--- |
-| id | Identificador único da tarefa (Key do Jira). |
-| titulo | Nome ou resumo descritivo da tarefa. |
-| responsavel | Nome do colaborador alocado. |
-| area | Departamento ou squad correspondente. |
-| prioridade | Nível de criticidade (Highest a Lowest). |
-| status | Status atual do fluxo de trabalho (ex: To Do, In Progress, Done). |
-| data_inicio | Data de início da atividade. |
-| prazo | Data limite para a entrega (Deadline). |
-| data_conclusao | Data em que a tarefa foi movida para o status concluído. |
-| dias_restantes | Cálculo de dias disponíveis até o prazo final. |
-| atrasado | Marca booleana ou binária indicando atraso (Sim/Não ou 1/0). |
-| status_prazo | Classificação textual do status do prazo (ex: No Prazo, Atenção, Atrasado). |
+# Windows
+.venv\Scripts\activate
+# Linux / macOS
+source .venv/bin/activate
 
-### BASE_HORAS
-| Campo | Descrição |
-| :--- | :--- |
-| funcionario | Nome do colaborador. |
-| data | Data do registro do esforço. |
-| horas | Quantidade de horas trabalhadas ou alocadas no dia. |
+pip install -r requirements.txt
+pip install -e .
+```
 
-## Níveis de Prioridade (Jira Mapping)
+O `pip install -e .` é necessário: o pacote vive em `src/`, e é ele quem coloca
+`sop_pipeline` no path.
 
-* Highest: Crítica
-* High: Alta
-* Medium: Média
-* Low: Baixa
-* Lowest: Muito Baixa
+---
 
-## Lógica de Negócio
+## Configuração
 
-As seguintes premissas e regras analíticas regem os cálculos automatizados:
-1. Tarefa Concluída: Identificada estritamente quando o campo data_conclusao está devidamente preenchido.
-2. Identificação de Atraso: Uma tarefa é marcada como atrasada se prazo for menor que hoje e a atividade ainda não estiver concluída.
-3. Métrica de Produtividade: Calculada pela divisão de Tarefas Concluídas por Horas Trabalhadas.
-4. Percentual de Conclusão: Mensurado através da divisão de Tarefas Concluídas pelo Total de Tarefas.
+Copie o arquivo de exemplo e preencha os valores:
 
-## Boas Práticas Adotadas
+```bash
+cp .env.example .env    # Windows: copy .env.example .env
+```
 
-* Separação entre Dados e Visualização: As abas de dados (BASE_*) servem apenas como repositórios limpos, enquanto a aba DASHBOARD é isolada para consumo visual.
-* Tabelas Estruturadas: Utilização do recurso Formatar como Tabela do Excel, garantindo referências estruturadas dinâmicas e fórmulas que se expandem sozinhas.
-* Não Duplicação de Dados: Estrutura normalizada utilizando tabelas dimensionais (DIM_FUNCIONARIOS) conectadas por chaves.
-* Cálculos no Excel: O Python é responsável apenas pela extração e transporte dos dados brutos. Os cálculos e fórmulas lógicas rodam nativamente no Excel para manter a flexibilidade do usuário.
-* Backend desacoplado: Toda a regra de conexão e autenticação com o ecossistema Jira fica centralizada nos scripts Python de forma segura.
+O `.env` **nunca** é versionado (está no `.gitignore`). Todo segredo do projeto
+— token do Jira, chave do Clockify, webhooks do Teams, credenciais do B2 — vem de
+lá; nada fica escrito no código.
 
-## Tecnologias Utilizadas
+As variáveis estão agrupadas por serviço dentro do `.env.example`, cada uma com um
+comentário explicando onde obter o valor. Resumo:
 
-* Python: Linguagem core utilizada para a construção do script de backend e automação do pipeline.
-* Excel: Interface visual e motor de cálculo dinâmico (fórmulas e tabelas dinâmicas).
-* Pandas: Biblioteca Python para manipulação, limpeza e estruturação eficiente das matrizes de dados.
-* OpenPyXL: Engine de integração utilizada pelo Python para ler, gravar e modificar planilhas Excel sem a necessidade de abrir a interface do software.
-* API do Jira: Endpoint oficial utilizado para realizar as consultas (JQL) e extrair o status das tarefas em tempo real.
+| Grupo | Variáveis |
+|---|---|
+| Jira | `JIRA_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`, `JIRA_JQL`, `JIRA_CUSTOMFIELD_AREA` |
+| Clockify | `API_KEY_CLOCKIFY`, `WORKSPACE_ID`, `WORKSPACE_NAME` |
+| Regras de alerta | `ALERT_DAYS_LOW`, `ALERT_DAYS_MEDIUM`, `ALERT_DAYS_HIGH`, `HIGH_PRIORITIES`, `LOW_PRIORITIES` |
+| Teams | `WEBHOOK_TI`, `WEBHOOK_SOP`, `WEBHOOK_IA`, `WEBHOOK_FRONT`, `WEBHOOK_DESIGN`, `WEBHOOK_DATA`, `WEBHOOK_BACK`, `WEBHOOK_NO_AREA` |
+| Backblaze B2 | `B2_ENDPOINT_URL`, `B2_BUCKET_NAME`, `B2_APPLICATION_KEY`, `B2_KEY_ID`, `EXCEL_CLOUD_NAME`, `TEMP_EXCEL_PATH` |
+| Observabilidade | `SENTRY_DSN`, `BETTERSTACK_HEARTBEAT_URL`, `BETTERSTACK_SOURCE_TOKEN`, `BETTERSTACK_INGESTING_HOST` |
 
-## Próximos Passos
+### A consulta JQL (`JIRA_JQL`)
 
-- Implementação de logs e tratamento de exceções robusto na conexão com a API do Jira.
-- Agendamento da automação via nuvem (ex: GitHub Actions, Airflow ou AWS Lambda) para atualização programada.
-- Migração incremental ou espelhamento do dashboard para o Power BI buscando maior interatividade.
-- Criação de um sistema de alertas automáticos (via e-mail ou Slack ou Teams) para notificar os colaboradores sobre tarefas próximas ao prazo de expiração.
+A variável `JIRA_JQL` define **quais issues o pipeline busca no Jira**. É uma
+consulta JQL comum, no mesmo formato usado na busca avançada do Jira:
 
-## Autor
+```
+JIRA_JQL="project = SEUPROJETO ORDER BY created DESC"
+```
 
-Projeto desenvolvido com foco em excelência operacional, automação corporativa e análise de dados focada na gestão de performance de equipes de alta performance.
+O `JiraClient` envia essa string para o endpoint de busca e pagina o resultado até
+o fim, então qualquer filtro válido de JQL funciona — por status, por responsável,
+por data de atualização, etc.
+
+O **valor real fica apenas no `.env` local** e não é publicado neste repositório,
+porque a query contém o identificador do projeto Jira, que não deve ser público. O
+`.env.example` traz apenas o formato genérico acima.
+
+---
+
+## Como rodar
+
+Com o `.env` preenchido e o ambiente ativado:
+
+```bash
+python main.py
+```
+
+Ou, via o script instalado pelo `pip install -e .`:
+
+```bash
+sop-pipeline
+```
+
+Uma execução completa:
+
+1. baixa a planilha do bucket B2 para o caminho de `TEMP_EXCEL_PATH`;
+2. busca as issues do Jira e grava tarefas, etiquetas e descrições;
+3. busca as horas de todos os usuários do Clockify e grava os apontamentos;
+4. sobe a planilha atualizada de volta para o bucket;
+5. envia os alertas de prazo para os canais do Teams;
+6. dispara o heartbeat do Better Stack, confirmando que a execução terminou.
+
+As etapas 2, 3 e 5 são isoladas entre si: se o Jira estiver fora do ar, as horas do
+Clockify ainda são coletadas. Falhas são logadas e enviadas ao Sentry.
+
+> A execução mexe em dados reais (bucket, planilha e canais do Teams). Para testar
+> mudanças sem efeito colateral, trabalhe sobre uma cópia local da planilha.
+
+---
+
+## Desenvolvimento
+
+```bash
+pip install -e ".[dev]"
+
+black src main.py tests      # formatação
+pylint src main.py tests     # lint
+pytest                       # testes
+```
+
+`black` e `pylint` são configurados no `pyproject.toml` (linha de 100 colunas).
+
+---
+
+## Licença
+
+MIT — veja [LICENSE](LICENSE).

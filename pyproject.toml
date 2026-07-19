@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sop-pipeline"
+version = "0.1.0"
+description = "Syncs Jira and Clockify into an Excel report and alerts Microsoft Teams."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+dependencies = [
+    "requests",
+    "openpyxl",
+    "pydantic[email]",
+    "pydantic-settings",
+    "python-dotenv",
+    "isodate",
+    "boto3",
+    "sentry-sdk",
+    "logtail-python",
+    "tzdata ; sys_platform == 'win32'",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pylint", "black"]
+
+[project.scripts]
+sop-pipeline = "sop_pipeline.pipeline:run"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.pylint.main]
+# The package lives under src/, so pylint needs it on the path to resolve imports.
+init-hook = "import sys; sys.path.insert(0, 'src')"
+
+[tool.pylint.format]
+max-line-length = 100
+
+[tool.pylint.design]
+max-args = 8
+max-locals = 20
+
+[tool.pylint."messages control"]
+disable = [
+    # openpyxl worksheet/table objects have no useful type to annotate against,
+    # so the helper signatures are intentionally untyped for those parameters.
+    "too-few-public-methods",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

@@ -1,12 +1,26 @@
-requests
-pytest
-openpyxl
-pydantic-settings
-python-dotenv
-pydantic[email]
-pylint
-isodate
-tzdata ; sys_platform == 'win32'
-boto3   
-sentry-sdk
-logtail-python
+# Direct dependencies, pinned so a library update cannot silently break the
+# pipeline. Regenerate with: pip freeze
+#
+# Development-only tools live in the "dev" extra of pyproject.toml:
+#   pip install -e ".[dev]"
+
+# --- Runtime ---
+requests==2.34.2
+openpyxl==3.1.5
+pydantic==2.13.4
+pydantic-settings==2.14.2
+email-validator==2.3.0
+python-dotenv==1.2.2
+isodate==0.7.2
+boto3==1.43.50
+sentry-sdk==2.66.0
+logtail-python==0.4.0
+
+# Windows ships no IANA timezone database; zoneinfo needs this to resolve
+# "America/Sao_Paulo".
+tzdata==2026.3 ; sys_platform == 'win32'
+
+# --- Development ---
+pytest==9.1.1
+pylint==4.0.6
+black==26.5.1
