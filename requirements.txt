@@ -5,3 +5,8 @@ pydantic-settings
 python-dotenv
 pydantic[email]
 pylint
+isodate
+tzdata ; sys_platform == 'win32'
+boto3   
+sentry-sdk
+logtail-python

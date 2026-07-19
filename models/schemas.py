@@ -1,20 +1,20 @@
 from enum import Enum
 from pydantic import BaseModel, computed_field, Field, EmailStr
-from datetime import datetime, date
+from datetime import date
 
-class Prioridade(str, Enum):
+class Priority(str, Enum):
     HIGHEST = "Highest"
     HIGH = "High"
     MEDIUM = "Medium"
     LOW = "Low"
     LOWEST = "Lowest"
 
-class StatusPrazo(Enum):
+class StatusTerm(Enum):
     CONCLUIDO = "Concluído"
     ATRASADO = "Atrasado"
     ATENÇÃO = "Atenção"
     NO_PRAZO = "No prazo"
-    SEM_PRAZO = "Sem Prazo"
+    SEM_PRAZO = "Sem prazo"
 
 class TypeTask(str, Enum):
     BUG = "Bug"
@@ -27,52 +27,54 @@ class Tarefa(BaseModel):
     id: str
     title: str 
     responsible: str
-    prioridade: Prioridade
+    priority: Priority
     status: str
     area: str | None = None
-    data_criacao: date 
-    prazo: date | None = None
-    data_conclusao:  date | None = None
-    tipo: TypeTask
-    criador: str | None = None
-    data_atualizacao: date | None = None
-    etiquetas: list[str] = Field(default_factory=list)
+    creation_date: date 
+    term: date | None = None
+    completion_date:  date | None = None
+    type: TypeTask
+    creator: str | None = None
+    update_date: date | None = None
+    responsible_email: EmailStr | None = None
+    tags: list[str] = Field(default_factory=list)
 
     @computed_field
     @property
-    def dias_restantes(self) -> int | None:
-        if self.prazo is None:
+    def days_remaining(self) -> int | None:
+        if self.term is None:
             return None
-        return (self.prazo - date.today()).days
+        return (self.term - date.today()).days
 
     @computed_field
     @property
-    def esta_atrasado(self) -> str | None:
-        if self.prazo is None:
+    def its_late(self) -> str | None:
+        if self.term is None:
             return None
-        return "SIM" if self.prazo < date.today() else "NÃO"
+        return "SIM" if self.term < date.today() else "NÃO"
 
 
     @computed_field
     @property
-    def status_prazo(self) -> str:
-        if self.data_conclusao is not None:
-            s = StatusPrazo.CONCLUIDO
-        elif self.prazo is not None:
-            days_until_deadline = (self.prazo - date.today()).days
-            if self.prazo < date.today():
-                s = StatusPrazo.ATRASADO
+    def status_term(self) -> str:
+        if self.completion_date is not None:
+            s = StatusTerm.CONCLUIDO
+        elif self.term is not None:
+            days_until_deadline = (self.term - date.today()).days
+            if self.term < date.today():
+                s = StatusTerm.ATRASADO
             elif 0 < days_until_deadline <= 3:
-                s = StatusPrazo.ATENÇÃO
+                s = StatusTerm.ATENÇÃO
             else: 
-                s = StatusPrazo.NO_PRAZO
+                s = StatusTerm.NO_PRAZO
         else:
-            s = StatusPrazo.SEM_PRAZO
+            s = StatusTerm.SEM_PRAZO
         return s.value
 
 class RegistroHoras(BaseModel):
+    id: str
     funcionario: str
-    data: datetime
+    data: date
     horas: float = Field(ge=0)
 
 class Funcionario(BaseModel):
@@ -99,3 +101,4 @@ class TarefaEtiqueta(BaseModel):
 class DetalheTarefa(BaseModel):
     id_tarefa: str
     descricao: str | None = None
+

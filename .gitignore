@@ -1,7 +1,7 @@
 .env
 venv/
+.venv/
 __pycache__/
 *.pyc
-things_for_remind.txt
-teste.py 
-test.py 
+*.xlsx
+.vscode/
