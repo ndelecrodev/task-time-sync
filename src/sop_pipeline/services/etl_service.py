@@ -32,8 +32,41 @@ class EtlService:
     """
 
     def __init__(self) -> None:
-        """Read the configurable Jira custom-field ID for the area field."""
+        """Read the configurable Jira custom-field ID and load employee mappings."""
         self.jira_customfield_area = settings.JIRA_CUSTOMFIELD_AREA
+        self.employee_registry = settings.load_employee_registry()
+        self._unmapped_employees_warned: set[str] = set()
+
+    def normalize_employee_identifier(self, identifier: str | None) -> str | None:
+        """Normalize an employee identifier (name or email) to canonical form.
+
+        Looks up the identifier in the employee registry. If found, returns the
+        canonical name. If not found, returns a visible sentinel value.
+
+        Args:
+            identifier: A name, email, or None from Jira/Clockify.
+
+        Returns:
+            str | None: The canonical name, a sentinel value like "Unmapped
+            employee: email", or ``None``/the sentinel constants passed straight
+            through unchanged.
+        """
+        if identifier is None or identifier in (NO_RESPONSIBLE, NO_AREA):
+            return identifier
+
+        canonical = self.employee_registry.resolve(identifier)
+        if canonical is not None:
+            return canonical
+
+        # Employee not found in config; use visible sentinel so they show up in the report.
+        if identifier not in self._unmapped_employees_warned:
+            logger.warning(
+                "Employee not found in mapping configuration: %s; will be marked as unmapped",
+                identifier,
+            )
+            self._unmapped_employees_warned.add(identifier)
+
+        return f"Unmapped employee: {identifier}"
 
     def transform_tasks(self, raw_issues: list) -> list[Task]:
         """Convert raw Jira issues into :class:`Task` models.
@@ -88,6 +121,13 @@ class EtlService:
         else:
             assignee = fields["assignee"].get("displayName")
             assignee_email = fields["assignee"].get("emailAddress")
+
+        # Normalize the assignee to canonical name using the email if available,
+        # otherwise try the display name.
+        if assignee_email:
+            assignee = self.normalize_employee_identifier(assignee_email)
+        else:
+            assignee = self.normalize_employee_identifier(assignee)
 
         if fields[self.jira_customfield_area] is None:
             area = NO_AREA
@@ -249,11 +289,12 @@ class EtlService:
         """
         return {user.get("id"): user.get("email") for user in users}
 
-    @staticmethod
     def transform_time_entries(
-        raw_entries: list[dict], email_by_user_id: dict[str, str]
+        self, raw_entries: list[dict], email_by_user_id: dict[str, str]
     ) -> list[TimeEntry]:
         """Convert raw Clockify entries into :class:`TimeEntry` models.
+
+        Normalizes the employee email to canonical name using the employee registry.
 
         Args:
             raw_entries: Time-entry dicts from ``ClockifyClient.fetch_time_entries``.
@@ -267,6 +308,10 @@ class EtlService:
             try:
                 user_id = entry.get("userId", "Unknown")
                 email = email_by_user_id.get(user_id, UNKNOWN_EMAIL)
+
+                # Normalize the employee email to canonical name
+                employee = self.normalize_employee_identifier(email)
+
                 raw_duration = entry["timeInterval"]["duration"]
                 # A running timer has no duration yet; Clockify sends null, which
                 # isodate cannot parse. Skip it and pick it up on a later run.
@@ -277,7 +322,7 @@ class EtlService:
                 time_entries.append(
                     TimeEntry(
                         entry_id=entry["id"],
-                        employee=email,
+                        employee=employee,
                         entry_date=start_date,
                         hours=duration,
                     )

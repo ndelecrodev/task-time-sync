@@ -5,8 +5,17 @@ All credentials and tunables come from a local ``.env`` file (see
 single ready-to-use :data:`settings` instance.
 """
 
+from logging import getLogger
+
 from pydantic import Field
 from pydantic_settings import BaseSettings
+from sqlalchemy import create_engine
+from sqlalchemy.exc import SQLAlchemyError
+
+from sop_pipeline.clients.postgres_client import PostgresClient
+from sop_pipeline.config.employees import EmployeeMapping, EmployeeRegistry
+
+logger = getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -57,6 +66,36 @@ class Settings(BaseSettings):
     BETTERSTACK_HEARTBEAT_URL: str
     BETTERSTACK_SOURCE_TOKEN: str
     BETTERSTACK_INGESTING_HOST: str
+    DATABASE_URL: str
+
+    def load_employee_registry(self) -> EmployeeRegistry:
+        """Load and validate the employee registry from Postgres.
+
+        Returns:
+            EmployeeRegistry: The validated employee registry.
+
+        Raises:
+            SQLAlchemyError: If the database cannot be reached.
+            ValueError: If any email is mapped to multiple canonical names.
+        """
+        try:
+            employees = PostgresClient(engine).get_employees()
+        except SQLAlchemyError as error:
+            logger.error("Failure to connect to the database: %s", error)
+            raise
+
+        mappings = []
+        for employee in employees:
+            mapping = EmployeeMapping(
+                canonical_name=employee.canonical_name,
+                jira_email=employee.jira_email,
+                clockify_email=employee.clockify_email,
+            )
+            mappings.append(mapping)
+
+        registry = EmployeeRegistry(mappings)
+        logger.info("Loaded %d employee mappings:", len(mappings))
+        return registry
 
     @property
     def teams_webhooks(self) -> dict[str, str]:
@@ -83,3 +122,5 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+engine = create_engine(settings.DATABASE_URL)

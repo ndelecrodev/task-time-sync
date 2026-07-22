@@ -1,0 +1,194 @@
+Context: this is the sop_pipeline repo. This is a learning project for the
+repo owner — prioritize clarity and correctness over cleverness. Do not
+change functional/runtime behavior anywhere in this task unless you are
+fixing a confirmed bug (see Task 6). Run the test suite and pylint after
+each numbered task below, before moving to the next one, so a regression
+in one step doesn't compound into the next.
+
+=== TASK 1: Split ExcelWriter into write-only + table helpers ===
+
+integrations/excel_writer.py currently mixes writing logic with lookup/
+structural helpers that aren't about writing: _find_row, _find_tag_id,
+_next_row, _next_tag_id, _link_exists, _expand_table. These search for
+rows, compute indices, and check existence — none of them write a cell.
+
+Move them into a new module (e.g. integrations/excel_table_helpers.py),
+either as free functions or a small helper class, whichever better matches
+the style already used for excel_workbook.py's open_workbook and
+create_column_map (which already went through the same "extract shared
+logic" treatment). ExcelWriter should end up containing only the save_*
+public methods and the _write_*_row private methods that actually place
+values into cells. Update every caller (ExcelWriter itself, and
+ExcelReader if it uses any of these) to import from the new location.
+
+=== TASK 2: Rename Portuguese identifiers to English ===
+
+Many variable, method, function, and parameter names across the codebase
+are in Portuguese and should become English, EXCEPT for anything that is
+a literal external identifier — renaming those would break the program
+at runtime. Do NOT rename:
+- SQLAlchemy ORM model class names or their column attributes (Funcionarios,
+  Tarefas, DetalhesTarefa, Horas, Etiquetas, TarefaEtiqueta, and fields like
+  canonical_name, jira_email, responsavel_id, etc.) — these map to real
+  Postgres tables/columns and are documented as staying in Portuguese
+  deliberately.
+- Any literal string referencing an Excel sheet name, table name, or column
+  header (e.g. "BASE_TAREFAS", "dim_funcionario", "responsavel", "titulo",
+  the keys used in TASK_COLUMN_MAP, or dict keys read from DIM_FUNCIONARIO
+  headers in ExcelReader) — excel_writer.py's own module docstring already
+  explains why these can't be translated.
+- Environment variable names in Settings.
+
+DO rename: local variables, private helper method names, function
+parameter names, and class/method names that are pure Python-side naming
+with no tie to an external system. Concrete examples already known to need
+this: PostgresClient.upsert_funcionario → upsert_employee (keep the
+parameter names matching what they represent, e.g. canonical_name stays
+since it mirrors the DB column), upsert_tarefa → upsert_task, upsert_hora
+→ upsert_time_entry, upsert_etiqueta_e_vinculo → upsert_tag_and_link;
+EmployeeSyncService's internal variables (linha → row, linhas → rows,
+unicas → unique_rows, duplicadas → duplicate_rows, chave → key,
+jira_vistos/clockify_vistos → seen_jira_emails/seen_clockify_emails);
+nome_para_id in pipeline.py → name_to_id or similar.
+
+Search the whole repo systematically for this pattern rather than relying
+on the examples above — there may be more instances in files not
+mentioned here. When in doubt about whether an identifier is tied to an
+external system, leave it in Portuguese and flag it in your summary at the
+end rather than guessing.
+
+=== TASK 3: Docstrings and comments ===
+
+Rewrite docstrings and comments across the codebase (both newly renamed
+code from Task 2 and pre-existing code) for clarity and consistency.
+Specifically:
+- Flag and rewrite any comment that reads as generic/AI-sounding filler
+  (states the obvious, repeats what the code already says, adds no
+  "why") — replace with either nothing (if the code is self-explanatory)
+  or a comment that explains a non-obvious reason, matching the existing
+  style already used in files like etl_service.py and excel_writer.py
+  (e.g. the comment above build_email_index explaining WHY it's built
+  once, not WHAT a dict is).
+- Every public method/function needs a docstring in the Google-style
+  format already used throughout the project (Args/Returns/Raises).
+- Docstrings must reflect current behavior — some are stale from before
+  the Postgres migration (e.g. Settings.load_employee_registry still may
+  reference the old EMPLOYEES_JSON approach; check for others like it).
+
+=== TASK 4: Confirm English-language consistency outside docs/en ===
+
+There's a docs/ folder split into English and Portuguese subfolders. Some
+files outside that folder (code comments, docstrings, README-adjacent
+files) are also supposed to be in English but may not consistently be.
+Audit every source file's comments/docstrings and every doc file NOT
+under docs/pt (or whatever the Portuguese subfolder is named — check
+actual folder names) to confirm it is fully in English, with no
+Portuguese sentences mixed in. Report anything ambiguous rather than
+guessing which language it should be.
+
+=== TASK 5: Update both READMEs ===
+
+Update README.md (English) and the Portuguese README to reflect the
+current architecture: the Postgres/Supabase integration (PostgresClient,
+the funcionarios/tarefas/detalhes_tarefa/horas/etiquetas/tarefa_etiqueta
+schema), the ExcelReader + EmployeeSyncService flow (Excel DIM_FUNCIONARIO
+as the editable source of employee identity, synced into Postgres before
+each run), and the Task 1 split of ExcelWriter. Keep both READMEs in sync
+with each other in structure and content, just in their respective
+languages.
+
+=== TASK 6: Bug audit ===
+
+Do a careful pass over the whole repo, with particular attention to the
+newest code (PostgresClient, ExcelReader, EmployeeSyncService, the
+pipeline.py wiring for the Postgres sync) since that code has had several
+rounds of bugfixes already and may have more. Look specifically for:
+- SQLAlchemy Session/query misuse (e.g. missing .first()/.all() on scalar
+  results, forgetting session.flush() before using an autogenerated ID).
+- Type mismatches between what a function returns and what its caller
+  expects.
+- Places where a value could be None and isn't handled (e.g. FK columns
+  that are nullable by design, like responsavel_id/funcionario_id for
+  unmapped employees or unassigned tasks).
+Fix confirmed bugs; for anything you're not certain is a real bug, list it
+in your final summary instead of changing it silently.
+
+=== TASK 7: Cache review ===
+
+Check for committed cache artifacts that shouldn't be in version control
+(__pycache__/, .pytest_cache/, .mypy_cache/, .ruff_cache/, or similar) and
+confirm .gitignore excludes them; if any are currently tracked in git,
+remove them from tracking (git rm --cached) without deleting the local
+files. Also check application-level caching (e.g. anything memoized or
+computed once and reused, like build_email_index or the module-level
+engine/settings singletons) for correctness — flag anything that looks
+like it's caching in a scope that's too broad or too narrow for how it's
+actually used, but don't change it unless you're confident it's wrong.
+
+=== TASK 8: Update .env.example, requirements, .gitignore/.gitattributes ===
+
+- .env.example: confirm every variable in config/settings.py Settings
+  class has a matching example entry (with a placeholder, never a real
+  value), and that DATABASE_URL is documented with the
+  postgresql+psycopg:// format and a comment noting the Supabase
+  transaction pooler (port 6543) should be used, not the direct
+  connection, because of IPv6.
+- requirements (or pyproject.toml, whichever this project uses): confirm
+  sqlalchemy and psycopg[binary] are listed with the dependencies actually
+  used elsewhere (openpyxl, pydantic, pydantic-settings, sentry-sdk,
+  logtail-python, isodate, requests, etc.) — remove anything no longer
+  imported anywhere in the codebase.
+- .gitignore: confirm it covers .env, __pycache__/, cache directories
+  from Task 7, and any local temp files (e.g. the local copy of the
+  Excel workbook written to TEMP_EXCEL_PATH).
+- .gitattributes: only touch this if you find a concrete problem (e.g.
+  line-ending inconsistencies causing diff noise); don't add anything
+  speculative.
+
+=== TASK 9: Pylint ===
+
+Run pylint across the whole repo and fix what it flags, consistent with
+whatever pylint configuration already exists in the repo (check for a
+.pylintrc or pyproject.toml [tool.pylint] section before assuming default
+rules). Don't disable rules to make warnings go away unless a disable
+comment already exists elsewhere in the codebase for the same category of
+warning, matching that precedent.
+
+=== TASK 10: Avoid AI-sounding writing throughout ===
+
+Apply this to every piece of prose you write or rewrite in this task:
+docstrings, comments, both READMEs, and any other doc file you touch.
+
+- Do not use em dashes (—) or en dashes as a substitute for periods,
+  commas, or parentheses. Use a period, comma, or a plain hyphen in a
+  compound word instead.
+- Do not use emojis anywhere, including as bullet markers or section
+  decorations.
+- Do not use the "not X, but Y" or "it's not just X, it's Y" rhetorical
+  pattern.
+- Avoid stock transition phrases like "It's worth noting that", "In
+  today's fast-paced world", "When it comes to X", "At the end of the
+  day", or similar filler openers.
+- Avoid triplets ("fast, reliable, and scalable") used as a rhythmic
+  device rather than because three specific things are genuinely being
+  listed.
+- Do not end sections with a generic summary sentence that just restates
+  what was already said.
+- Match the plain, direct, technical register already present in the
+  existing docstrings and comments in this repo (look at etl_service.py
+  and excel_writer.py as the reference for tone) rather than a more
+  generic technical-writing voice.
+- For the READMEs specifically: write like a developer documenting their
+  own project for other developers, not like marketing copy or a
+  tutorial introduction. No "Welcome to X!" openers, no exclamation
+  points used for enthusiasm.
+
+If you're unsure whether a sentence you're about to write falls into one
+of these patterns, rewrite it plainer rather than checking it against
+this list after the fact.
+
+=== Final output ===
+
+End with a summary listing: every file touched, every identifier renamed
+(old → new), any bug fixed with a one-line explanation, and anything you
+flagged as ambiguous instead of guessing.

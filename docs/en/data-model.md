@@ -6,6 +6,30 @@ Defined in `src/sop_pipeline/models/schemas.py`. They are Pydantic models: a Jir
 issue that doesn't satisfy the contract is discarded with a `warning`, instead of
 bringing down the entire execution.
 
+### Employee identity
+
+Since Jira identifies people by display name and Clockify by email, a mapping
+layer normalizes both to a canonical name used as the join key.
+
+**Editable source:** the workbook's `DIM_FUNCIONARIO` tab is where someone
+corrects or adds employees by hand. Before each run, `EmployeeSyncService`
+reads that tab with `ExcelReader` and writes the rows into Postgres'
+`funcionarios` table via `PostgresClient.upsert_employee`, matched by either
+`jira_email` or `clockify_email`. Rows whose email repeats earlier in the same
+sheet are split off as duplicates and written to the `DUPLICADOS_REMOVIDOS`
+tab instead of being synced.
+
+**Runtime use:** `Settings.load_employee_registry` reads the already-synced
+`funcionarios` table and builds an `EmployeeRegistry`, used by `EtlService` to
+normalize `Task.assignee` (from Jira) and `TimeEntry.employee` (from Clockify)
+to the canonical name.
+
+**Unmapped employees:** if an employee is not found in the registry, they
+receive a visible sentinel value (`"Unmapped employee: <email>"`) instead of
+being dropped silently. This follows design decision #8: a single bad record
+does not take down the whole run, and data quality issues are visible in the
+report rather than hidden.
+
 ### `Task`
 
 A normalized Jira issue. Upsert key: `task_id` (the Jira *key*).
@@ -107,13 +131,16 @@ TASK_COLUMN_MAP = {
 `DETALHES_TAREFA` and `BASE_HORAS` have short fixed layouts, so they are written by
 column position, without going through the header map.
 
-### Tabs that Python doesn't touch
+### Tabs that Python doesn't write
 
-They exist in the file and are maintained manually or by formula:
+They exist in the file and are maintained manually or by formula.
+`DIM_FUNCIONARIO` is the partial exception: nothing writes to it in code, but
+`ExcelReader` reads it on every run to sync the registry into Postgres (see
+"Employee identity" above).
 
 | Tab | Table | Role |
 |---|---|---|
-| `DIM_FUNCIONARIO` | `dim_funcionario` | Employee registry (id_funcionario, nome, email). |
+| `DIM_FUNCIONARIO` | `dim_funcionario` | Employee registry (id_funcionario, nome, email), read by `ExcelReader`. |
 | `DIM_FUNCIONARIO_AREA` | `dim_func_area` | Area dimension (id_area, nome_area). |
 | `FATO_FUNCIONARIO_AREA` | `fato_funcionario` | N:N relationship between employee and area. |
 | `CALCULOS` | `Tabela6` | Metrics per person (tasks, completed, overdue, hours, productivity). |
@@ -135,3 +162,19 @@ DIM_FUNCIONARIO (id_funcionario)
 
 BASE_HORAS (funcionario) ──── links to DIM_FUNCIONARIO by email
 ```
+
+## Postgres schema
+
+Defined in `src/sop_pipeline/clients/postgres_client.py`. Table and column
+names mirror the schema already deployed in Supabase and stay in Portuguese
+for that reason; the upsert methods and `PostgresClient` itself are in
+English.
+
+| Table | Role | Upserted by |
+|---|---|---|
+| `funcionarios` | Employee identity, synced from `DIM_FUNCIONARIO`. | `upsert_employee` |
+| `tarefas` | One row per Jira issue; `responsavel_id` is `NULL` when the employee could not be mapped. | `upsert_task` |
+| `detalhes_tarefa` | Long-form task description. | `upsert_task_detail` |
+| `horas` | One Clockify time entry; `funcionario_id` is `NULL` when the employee could not be mapped. | `upsert_time_entry` |
+| `etiquetas` | Distinct tags assigned to tasks. | `upsert_tag_and_link` |
+| `tarefa_etiqueta` | N:N association between `tarefas` and `etiquetas`. | `upsert_tag_and_link` |
