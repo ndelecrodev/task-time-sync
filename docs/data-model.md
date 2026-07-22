@@ -6,6 +6,31 @@ Definidos em `src/sop_pipeline/models/schemas.py`. São modelos Pydantic: uma
 issue do Jira que não satisfaça o contrato é descartada com um `warning`, em vez
 de derrubar a execução inteira.
 
+### Identidade de colaboradores
+
+Como o Jira identifica pessoas pelo nome de exibição e o Clockify por e-mail, uma
+camada de mapeamento normaliza os dois para um nome canônico usado como chave de
+junção.
+
+**Fonte editável:** a aba `DIM_FUNCIONARIO` da planilha é onde alguém corrige ou
+adiciona colaboradores manualmente. Antes de cada execução, `EmployeeSyncService`
+lê essa aba com `ExcelReader` e grava as linhas na tabela `funcionarios` do
+Postgres via `PostgresClient.upsert_employee`, casando por `jira_email` ou
+`clockify_email`. Linhas com um e-mail repetido na mesma planilha são separadas
+como duplicatas e gravadas na aba `DUPLICADOS_REMOVIDOS` em vez de serem
+sincronizadas.
+
+**Uso em runtime:** `Settings.load_employee_registry` lê a tabela `funcionarios`
+já sincronizada e monta um `EmployeeRegistry`, usado pelo `EtlService` para
+normalizar `Task.assignee` (vindo do Jira) e `TimeEntry.employee` (vindo do
+Clockify) para o nome canônico.
+
+**Colaboradores não mapeados:** se um colaborador não é encontrado no registro,
+ele recebe um valor sentinela visível (`"Unmapped employee: <email>"`) em vez de
+ser descartado silenciosamente. Segue a decisão de design #8: um registro ruim
+não derruba a execução inteira, e problemas de qualidade de dados ficam visíveis
+no relatório em vez de escondidos.
+
 ### `Task`
 
 Uma issue do Jira normalizada. Chave de upsert: `task_id` (a *key* do Jira).
@@ -114,13 +139,16 @@ TASK_COLUMN_MAP = {
 `DETALHES_TAREFA` e `BASE_HORAS` têm layout fixo e curto, então são escritas por
 posição de coluna, sem passar pelo mapa de cabeçalhos.
 
-### Abas que o Python não toca
+### Abas que o Python não escreve
 
-Existem no arquivo e são mantidas manualmente ou por fórmula:
+Existem no arquivo e são mantidas manualmente ou por fórmula. `DIM_FUNCIONARIO`
+é a exceção parcial: ninguém escreve nela por código, mas `ExcelReader` a lê a
+cada execução para sincronizar o cadastro com o Postgres (ver "Identidade de
+colaboradores" acima).
 
 | Aba | Tabela | Papel |
 |---|---|---|
-| `DIM_FUNCIONARIO` | `dim_funcionario` | Cadastro de colaboradores (id_funcionario, nome, email). |
+| `DIM_FUNCIONARIO` | `dim_funcionario` | Cadastro de colaboradores (id_funcionario, nome, email), lido por `ExcelReader`. |
 | `DIM_FUNCIONARIO_AREA` | `dim_func_area` | Dimensão de áreas (id_area, nome_area). |
 | `FATO_FUNCIONARIO_AREA` | `fato_funcionario` | Relação N:N entre colaborador e área. |
 | `CALCULOS` | `Tabela6` | Métricas por pessoa (tarefas, concluídas, atrasadas, horas, produtividade). |
@@ -142,3 +170,18 @@ DIM_FUNCIONARIO (id_funcionario)
 
 BASE_HORAS (funcionario) ──── liga-se a DIM_FUNCIONARIO por e-mail
 ```
+
+## Esquema no Postgres
+
+Definido em `src/sop_pipeline/clients/postgres_client.py`. Nomes de tabela e de
+coluna espelham o schema já implantado no Supabase e por isso permanecem em
+português; os métodos de upsert e o próprio `PostgresClient` estão em inglês.
+
+| Tabela | Papel | Upsert por |
+|---|---|---|
+| `funcionarios` | Identidade de colaboradores, sincronizada a partir de `DIM_FUNCIONARIO`. | `upsert_employee` |
+| `tarefas` | Uma linha por issue do Jira; `responsavel_id` é `NULL` quando o colaborador não foi mapeado. | `upsert_task` |
+| `detalhes_tarefa` | Descrição longa de uma tarefa. | `upsert_task_detail` |
+| `horas` | Um apontamento de horas do Clockify; `funcionario_id` é `NULL` quando o colaborador não foi mapeado. | `upsert_time_entry` |
+| `etiquetas` | Tags distintas atribuídas a tarefas. | `upsert_tag_and_link` |
+| `tarefa_etiqueta` | Associação N:N entre `tarefas` e `etiquetas`. | `upsert_tag_and_link` |

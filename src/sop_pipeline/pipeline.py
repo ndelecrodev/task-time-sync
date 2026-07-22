@@ -12,22 +12,27 @@ from logtail import LogtailHandler
 
 from sop_pipeline.clients.clockify_client import ClockifyClient
 from sop_pipeline.clients.jira_client import JiraClient
-from sop_pipeline.config.settings import settings
+from sop_pipeline.config.settings import settings, engine
 from sop_pipeline.integrations.excel_writer import ExcelWriter
 from sop_pipeline.integrations.notifier import Notifier
 from sop_pipeline.integrations.storage_client import StorageClient
 from sop_pipeline.models.schemas import Task, TimeEntry
 from sop_pipeline.services.alert_service import AlertService
 from sop_pipeline.services.etl_service import EtlService
+from sop_pipeline.integrations.excel_reader import ExcelReader
+from sop_pipeline.clients.postgres_client import PostgresClient
+from sop_pipeline.services.employee_sync_service import EmployeeSyncService
 
 logger = logging.getLogger(__name__)
 
 
-def sync_jira(etl: EtlService) -> list[Task]:
+def sync_jira(etl: EtlService, postgres_client: PostgresClient, name_to_id: dict) -> list[Task]:
     """Fetch Jira issues, transform them and write them to the spreadsheet.
 
     Args:
         etl: The transformation service.
+        postgres_client: Persists tasks, details and tags into Postgres.
+        name_to_id: Employee canonical name mapped to ``funcionarios.id``.
 
     Returns:
         list[Task]: The tasks that were persisted, reused later for alerting.
@@ -42,6 +47,27 @@ def sync_jira(etl: EtlService) -> list[Task]:
     ExcelWriter.save_tags(settings.TEMP_EXCEL_PATH, tasks)
     ExcelWriter.save_details(settings.TEMP_EXCEL_PATH, details)
 
+    for task in tasks:
+        postgres_client.upsert_task(
+            task_id=task.task_id,
+            titulo=task.title,
+            responsavel_id=name_to_id.get(task.assignee),
+            area=task.area,
+            prioridade=task.priority,
+            status=task.status,
+            data_criacao=task.creation_date,
+            prazo=task.due_date,
+            data_conclusao=task.completion_date,
+            tipo=task.task_type,
+            criador=task.creator,
+            data_atualizacao=task.update_date,
+        )
+        for tag_name in task.tags:
+            postgres_client.upsert_tag_and_link(task_id=task.task_id, tag_name=tag_name)
+
+    for detail in details:
+        postgres_client.upsert_task_detail(task_id=detail.task_id, descricao=detail.description)
+
     # A discarded count well above zero means issues are vanishing from the
     # report — usually a Jira priority or issue type missing from the enums.
     logger.info(
@@ -53,11 +79,15 @@ def sync_jira(etl: EtlService) -> list[Task]:
     return tasks
 
 
-def sync_clockify(etl: EtlService) -> list[TimeEntry]:
+def sync_clockify(
+    etl: EtlService, postgres_client: PostgresClient, name_to_id: dict
+) -> list[TimeEntry]:
     """Fetch every user's time entries from Clockify and write them out.
 
     Args:
         etl: The transformation service.
+        postgres_client: Persists time entries into Postgres.
+        name_to_id: Employee canonical name mapped to ``funcionarios.id``.
 
     Returns:
         list[TimeEntry]: The time entries that were persisted.
@@ -75,6 +105,14 @@ def sync_clockify(etl: EtlService) -> list[TimeEntry]:
         time_entries.extend(etl.transform_time_entries(raw_entries, email_by_user_id))
 
     ExcelWriter.save_hours(settings.TEMP_EXCEL_PATH, time_entries)
+
+    for time_entry in time_entries:
+        postgres_client.upsert_time_entry(
+            entry_id=time_entry.entry_id,
+            funcionario_id=name_to_id.get(time_entry.employee),
+            data=time_entry.entry_date,
+            horas=time_entry.hours,
+        )
 
     logger.info("Clockify: %s time entries written", len(time_entries))
     return time_entries
@@ -124,6 +162,14 @@ def run() -> None:
         local_destination=settings.TEMP_EXCEL_PATH, cloud_name=settings.EXCEL_CLOUD_NAME
     )
 
+    employee_sync = EmployeeSyncService(ExcelReader(), PostgresClient(engine))
+    employee_sync.sync(settings.TEMP_EXCEL_PATH)
+
+    postgres_client = PostgresClient(engine)
+    name_to_id = {
+        employee.canonical_name: employee.id for employee in postgres_client.get_employees()
+    }
+
     etl = EtlService()
 
     # None means "the Jira sync did not complete", which is different from "Jira
@@ -131,13 +177,13 @@ def run() -> None:
     # run the alert step against an empty list and look like a clean run.
     tasks: list[Task] | None = None
     try:
-        tasks = sync_jira(etl)
+        tasks = sync_jira(etl, postgres_client, name_to_id)
     except Exception as error:  # pylint: disable=broad-except
         logger.error("Jira synchronisation failed: %s", error)
         sentry_sdk.capture_exception(error)
 
     try:
-        sync_clockify(etl)
+        sync_clockify(etl, postgres_client, name_to_id)
     except Exception as error:  # pylint: disable=broad-except
         logger.error("Clockify synchronisation failed: %s", error)
         sentry_sdk.capture_exception(error)

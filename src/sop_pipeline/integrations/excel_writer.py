@@ -15,11 +15,18 @@ translating them would break the lookups at runtime.
 from datetime import date
 from enum import Enum
 
-from openpyxl import Workbook, load_workbook
-from openpyxl.utils import get_column_letter, range_boundaries
 
 from sop_pipeline.errors.exceptions import ExcelWriteError
 from sop_pipeline.models.schemas import Task, TaskDetail, TimeEntry
+from sop_pipeline.integrations.excel_workbook import open_workbook, create_column_map
+from sop_pipeline.integrations.excel_table_helpers import (
+    expand_table,
+    find_row,
+    find_tag_id,
+    link_exists,
+    next_row,
+    next_tag_id,
+)
 
 # Left side: literal column header in the spreadsheet.
 # Right side: attribute name on the Task model.
@@ -47,28 +54,6 @@ class ExcelWriter:
     """Upserts tasks, tags, details and hours into the workbook."""
 
     @staticmethod
-    def _find_row(worksheet, wanted_id, table) -> int | None:
-        """Locate the row holding a given ID inside a table.
-
-        Scans the first column, which by convention holds the table's ID. The
-        table must already contain at least the header plus one row, since row 2
-        also serves as the formula template.
-
-        Args:
-            worksheet: The worksheet to scan.
-            wanted_id: The ID to look for.
-            table: The openpyxl table delimiting the scan range.
-
-        Returns:
-            int | None: The 1-based row number, or ``None`` when not found.
-        """
-        for row in range(2, range_boundaries(table.ref)[3] + 1):
-            if worksheet.cell(row=row, column=1).value == wanted_id:
-                return row
-
-        return None
-
-    @staticmethod
     def _copy_formulas(worksheet, new_row: int, template_row: int, column_map: dict) -> None:
         """Replicate the calculated columns onto a newly appended row.
 
@@ -87,52 +72,6 @@ class ExcelWriter:
             column = column_map[column_name]
             formula = worksheet.cell(row=template_row, column=column).value
             worksheet.cell(row=new_row, column=column, value=formula)
-
-    @staticmethod
-    def _create_column_map(worksheet, table) -> dict:
-        """Map each column header to its column index.
-
-        Args:
-            worksheet: The worksheet holding the table.
-            table: The openpyxl table whose header row is read.
-
-        Returns:
-            dict: Header text mapped to the 1-based column index.
-        """
-        column_map = {}
-        min_col, min_row, max_col, _ = range_boundaries(table.ref)
-        for column in range(min_col, max_col + 1):
-            header = worksheet.cell(row=min_row, column=column).value
-            column_map[header] = column
-        return column_map
-
-    @staticmethod
-    def _expand_table(table, last_row: int) -> None:
-        """Grow a table's reference range so it covers a newly appended row.
-
-        openpyxl does not track appended rows automatically; without this the new
-        row would sit outside the table and be invisible to its formulas.
-
-        Args:
-            table: The openpyxl table to resize.
-            last_row: The new last row of the table.
-        """
-        min_col, min_row, max_col, _ = range_boundaries(table.ref)
-        letter_min = get_column_letter(min_col)
-        letter_max = get_column_letter(max_col)
-        table.ref = f"{letter_min}{min_row}:{letter_max}{last_row}"
-
-    @staticmethod
-    def _next_row(table) -> int:
-        """Return the row index right after the table's current last row.
-
-        Args:
-            table: The openpyxl table to measure.
-
-        Returns:
-            int: The 1-based index of the first free row.
-        """
-        return range_boundaries(table.ref)[3] + 1
 
     @staticmethod
     def _write_task_row(worksheet, row: int, task: Task, column_map: dict) -> None:
@@ -172,18 +111,18 @@ class ExcelWriter:
             ExcelWriteError: If the workbook cannot be updated or saved.
         """
         try:
-            workbook = ExcelWriter._open_workbook(file_path)
+            workbook = open_workbook(file_path)
             worksheet = workbook["BASE_TAREFAS"]
             table = worksheet.tables["base_tarefas"]
-            column_map = ExcelWriter._create_column_map(worksheet, table)
+            column_map = create_column_map(worksheet, table)
 
             for task in tasks:
-                row = ExcelWriter._find_row(worksheet, task.task_id, table)
+                row = find_row(worksheet, task.task_id, table)
                 if row is not None:
                     ExcelWriter._write_task_row(worksheet, row, task, column_map)
                 else:
-                    row = ExcelWriter._next_row(table)
-                    ExcelWriter._expand_table(table, row)
+                    row = next_row(table)
+                    expand_table(table, row)
                     ExcelWriter._write_task_row(worksheet, row, task, column_map)
                     ExcelWriter._copy_formulas(
                         worksheet, row, template_row=2, column_map=column_map
@@ -192,45 +131,6 @@ class ExcelWriter:
             workbook.save(file_path)
         except (OSError, KeyError, ValueError) as error:
             raise ExcelWriteError(f"Failed to save tasks to {file_path}: {error}") from error
-
-    @staticmethod
-    def _find_tag_id(worksheet, table, wanted_name: str) -> int | None:
-        """Look up the surrogate ID of a tag by its name.
-
-        Args:
-            worksheet: The ``DIM_ETIQUETAS`` worksheet.
-            table: The tag dimension table.
-            wanted_name: The tag name to look for.
-
-        Returns:
-            int | None: The tag ID, or ``None`` when the tag is unknown.
-        """
-        for row in range(2, range_boundaries(table.ref)[3] + 1):
-            if worksheet.cell(row=row, column=2).value == wanted_name:
-                return worksheet.cell(row=row, column=1).value
-
-        return None
-
-    @staticmethod
-    def _next_tag_id(worksheet, table) -> int:
-        """Compute the next free surrogate ID in the tag dimension.
-
-        Args:
-            worksheet: The ``DIM_ETIQUETAS`` worksheet.
-            table: The tag dimension table.
-
-        Returns:
-            int: One past the highest existing ID, or 1 when the table is empty.
-        """
-        existing_ids = []
-        for row in range(2, range_boundaries(table.ref)[3] + 1):
-            cell_value = worksheet.cell(row=row, column=1).value
-            if cell_value is not None:
-                existing_ids.append(cell_value)
-
-        if not existing_ids:
-            return 1
-        return max(existing_ids) + 1
 
     @staticmethod
     def _get_or_create_tag_id(worksheet, table, tag_name: str) -> int:
@@ -244,37 +144,17 @@ class ExcelWriter:
         Returns:
             int: The existing or newly assigned tag ID.
         """
-        existing_id = ExcelWriter._find_tag_id(worksheet, table, tag_name)
+        existing_id = find_tag_id(worksheet, table, tag_name)
         if existing_id is not None:
             return existing_id
 
-        next_id = ExcelWriter._next_tag_id(worksheet, table)
-        row = ExcelWriter._next_row(table)
+        next_id = next_tag_id(worksheet, table)
+        row = next_row(table)
         worksheet.cell(row=row, column=1, value=next_id)
         worksheet.cell(row=row, column=2, value=tag_name)
-        ExcelWriter._expand_table(table, row)
+        expand_table(table, row)
 
         return next_id
-
-    @staticmethod
-    def _link_exists(worksheet, table, task_id: str, tag_id: int) -> bool:
-        """Check whether a task-tag association is already recorded.
-
-        Args:
-            worksheet: The ``FATO_TAREFA_ETIQUETA`` worksheet.
-            table: The fact table holding the associations.
-            task_id: Jira issue key.
-            tag_id: Surrogate tag ID.
-
-        Returns:
-            bool: ``True`` when the pair is already present.
-        """
-        for row in range(2, range_boundaries(table.ref)[3] + 1):
-            row_task_id = worksheet.cell(row=row, column=1).value
-            row_tag_id = worksheet.cell(row=row, column=2).value
-            if row_task_id == task_id and row_tag_id == tag_id:
-                return True
-        return False
 
     @staticmethod
     def _create_link(worksheet, table, task_id: str, tag_id: int) -> None:
@@ -286,12 +166,12 @@ class ExcelWriter:
             task_id: Jira issue key.
             tag_id: Surrogate tag ID.
         """
-        new_row = ExcelWriter._next_row(table)
+        new_row = next_row(table)
 
         worksheet.cell(row=new_row, column=1, value=task_id)
         worksheet.cell(row=new_row, column=2, value=tag_id)
 
-        ExcelWriter._expand_table(table, new_row)
+        expand_table(table, new_row)
 
     @staticmethod
     def save_tags(file_path: str, tasks: list[Task]) -> None:
@@ -309,7 +189,7 @@ class ExcelWriter:
             ExcelWriteError: If the workbook cannot be updated or saved.
         """
         try:
-            workbook = ExcelWriter._open_workbook(file_path)
+            workbook = open_workbook(file_path)
             worksheet_tags = workbook["DIM_ETIQUETAS"]
             table_tags = worksheet_tags.tables["dim_etiquetas"]
             worksheet_links = workbook["FATO_TAREFA_ETIQUETA"]
@@ -318,7 +198,7 @@ class ExcelWriter:
             for task in tasks:
                 for tag_name in task.tags:
                     tag_id = ExcelWriter._get_or_create_tag_id(worksheet_tags, table_tags, tag_name)
-                    if not ExcelWriter._link_exists(
+                    if not link_exists(
                         worksheet_links, table_links, task.task_id, tag_id
                     ):
                         ExcelWriter._create_link(worksheet_links, table_links, task.task_id, tag_id)
@@ -339,15 +219,15 @@ class ExcelWriter:
             ExcelWriteError: If the workbook cannot be updated or saved.
         """
         try:
-            workbook = ExcelWriter._open_workbook(file_path)
+            workbook = open_workbook(file_path)
             worksheet = workbook["DETALHES_TAREFA"]
             table = worksheet.tables["detalhes_tarefa"]
 
             for detail in details:
-                row = ExcelWriter._find_row(worksheet, detail.task_id, table)
+                row = find_row(worksheet, detail.task_id, table)
                 if row is None:
-                    row = ExcelWriter._next_row(table)
-                    ExcelWriter._expand_table(table, row)
+                    row = next_row(table)
+                    expand_table(table, row)
                 ExcelWriter._write_detail_row(worksheet, row, detail)
 
             workbook.save(file_path)
@@ -402,15 +282,15 @@ class ExcelWriter:
             ExcelWriteError: If the workbook cannot be updated or saved.
         """
         try:
-            workbook = ExcelWriter._open_workbook(file_path)
+            workbook = open_workbook(file_path)
             worksheet = workbook["BASE_HORAS"]
             table = worksheet.tables["base_horas"]
 
             for time_entry in time_entries:
-                row = ExcelWriter._find_row(worksheet, time_entry.entry_id, table)
+                row = find_row(worksheet, time_entry.entry_id, table)
                 if row is None:
-                    row = ExcelWriter._next_row(table)
-                    ExcelWriter._expand_table(table, row)
+                    row = next_row(table)
+                    expand_table(table, row)
                 ExcelWriter._write_hour_row(worksheet, row, time_entry)
 
             workbook.save(file_path)
@@ -418,19 +298,47 @@ class ExcelWriter:
             raise ExcelWriteError(f"Failed to save hours to {file_path}: {error}") from error
 
     @staticmethod
-    def _open_workbook(file_path: str) -> Workbook:
-        """Load the workbook and force a full recalculation on next open.
+    def _write_duplicate_row(worksheet, row: int, duplicate: dict) -> None:
+        """Write one removed-duplicate record onto a row.
 
-        The calculated columns live in Excel formulas, and openpyxl writes back
-        the cached values it read. Setting ``fullCalcOnLoad`` makes Excel refresh
-        every formula the next time a human opens the file.
+        This sheet has a fixed four-column layout (nome, jira_email,
+        clockify_email, motivo), so the columns are addressed by position
+        instead of through a header map.
+
+        Args:
+            worksheet: The ``DUPLICADOS_REMOVIDOS`` worksheet.
+            row: Target row number.
+            duplicate: The duplicate record to write.
+        """
+        worksheet.cell(row=row, column=1, value=duplicate["nome"])
+        worksheet.cell(row=row, column=2, value=duplicate["jira_email"])
+        worksheet.cell(row=row, column=3, value=duplicate["clockify_email"])
+        worksheet.cell(row=row, column=4, value=duplicate["reason"])
+
+    @staticmethod
+    def save_duplicates(file_path: str, duplicates: list[dict]) -> None:
+        """Append the employee rows dropped as duplicates to the audit sheet.
+
+        Unlike the other save_* methods this only ever appends: a removed
+        duplicate is a one-time event, not a record that gets updated later.
 
         Args:
             file_path: Path to the local workbook.
+            duplicates: The duplicate records to persist.
 
-        Returns:
-            Workbook: The loaded workbook.
+        Raises:
+            ExcelWriteError: If the workbook cannot be updated or saved.
         """
-        workbook = load_workbook(file_path)
-        workbook.calculation.fullCalcOnLoad = True
-        return workbook
+        try:
+            workbook = open_workbook(file_path)
+            worksheet = workbook["DUPLICADOS_REMOVIDOS"]
+            table = worksheet.tables["duplicados_removidos"]
+
+            for duplicate in duplicates:
+                row = next_row(table)
+                expand_table(table, row)
+                ExcelWriter._write_duplicate_row(worksheet, row, duplicate)
+
+            workbook.save(file_path)
+        except (OSError, KeyError, ValueError) as error:
+            raise ExcelWriteError(f"Failed to save duplicates to {file_path}: {error}") from error

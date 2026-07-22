@@ -19,6 +19,8 @@ dependencies = [
     "boto3",
     "sentry-sdk",
     "logtail-python",
+    "sqlalchemy",
+    "psycopg[binary]",
     "tzdata ; sys_platform == 'win32'",
 ]
 
