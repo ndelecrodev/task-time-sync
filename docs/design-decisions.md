@@ -148,3 +148,27 @@ valida o `.env`. Com reexportação em `integrations/__init__.py`, importar o
 `ExcelWriter` puxaria o `Notifier`, que puxaria as settings — e passaria a exigir
 um `.env` completo só para escrever numa planilha local. Sem reexportação, o
 `ExcelWriter` é testável de forma isolada.
+
+## 11. A validação de status no Excel é uma cópia manual do workflow do Jira
+
+O dropdown de validação em `BASE_TAREFAS.status` usa a lista `Backlog, To Do,
+In Progress, Code Review, Testing, Done`, copiada do workflow configurado no
+Jira em 22/07/2026.
+
+**Por quê:** diferente de `tipo` (`TaskType`, um enum validado em
+`models/schemas.py`), `status` é texto livre vindo direto do Jira — não existe
+enum no lado Python para essa coluna. Uma lista fixa no código correria o
+mesmo risco que já se materializou com `tipo` (a issue `QT-6` com
+`task_type="Function"`, fora do enum, foi descartada silenciosamente do
+relatório). Por isso a lista de status não vive no código: vive só na
+validação de dropdown do Excel, e precisa ser copiada manualmente do Jira.
+
+**Trade-off:** essa validação protege apenas edição manual da planilha. O
+pipeline sobrescreve `status` a cada execução com o valor vindo direto do
+Jira, sem passar pela validação do Excel — então um status novo no Jira
+aparece no relatório mesmo sem estar na lista do dropdown, mas editar a célula
+manualmente com um valor fora da lista é bloqueado.
+
+**Cuidado ao mexer nisso:** se o workflow do Jira mudar (status renomeado,
+adicionado ou removido), essa lista precisa ser atualizada manualmente no
+Excel. Não há sincronização automática entre as duas.
