@@ -50,9 +50,13 @@ The spreadsheet is not a dump: it is the final product, with tables, formulas, a
 
 `EmployeeSyncService` runs before the rest of the pipeline on every execution: it
 reads the workbook's `DIM_FUNCIONARIO` tab (the editable source of employee
-identity) and syncs the rows into the `funcionarios` table in Postgres. Only
-after that does `EtlService` load the already-synced registry to normalize Jira
-assignees and Clockify users to a shared canonical name.
+identity) and syncs the rows into the `funcionarios` table in Postgres. The
+first row to use a given email is synced normally; later rows that repeat the
+same email are diverted to the `DUPLICADOS_REMOVIDOS` tab instead of
+overwriting the existing record. The `funcionarios` table also stores
+`photo_url`, the employee photo consumed by the reporting dashboard. Only
+after the sync does `EtlService` load the already-synced registry to
+normalize Jira assignees and Clockify users to a shared canonical name.
 
 Details in [`docs/en/architecture.md`](architecture.md),
 [`docs/en/data-model.md`](data-model.md) and

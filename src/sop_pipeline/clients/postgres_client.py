@@ -47,6 +47,7 @@ class Funcionarios(Base):
         ),
         nullable=False,
     )
+    photo_url = Column(String)
 
 
 class Tarefas(Base):
@@ -141,13 +142,15 @@ class PostgresClient:
             result = session.scalars(select(Funcionarios))
             return result.all()
 
-    def upsert_employee(self, canonical_name: str, jira_email: str, clockify_email: str) -> None:
+    def upsert_employee(self, canonical_name: str, jira_email: str, clockify_email: str, photo_url: str | None) -> None:
         """Insert or update an employee, matched by either email address.
 
         Args:
             canonical_name: The normalized name used as the join key.
             jira_email: The email address that appears in Jira.
             clockify_email: The email address that appears in Clockify.
+            photo_url: Public Supabase Storage URL for the employee's photo,
+                or ``None`` when no photo has been uploaded yet.
         """
         with Session(self.engine) as session:
             existing = session.scalars(
@@ -163,12 +166,14 @@ class PostgresClient:
                         canonical_name=canonical_name,
                         jira_email=jira_email,
                         clockify_email=clockify_email,
+                        photo_url=photo_url,
                     )
                 )
             else:
                 existing.canonical_name = canonical_name
                 existing.jira_email = jira_email
                 existing.clockify_email = clockify_email
+                existing.photo_url = photo_url
 
             session.commit()
 

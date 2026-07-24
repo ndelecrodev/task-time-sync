@@ -15,14 +15,23 @@ layer normalizes both to a canonical name used as the join key.
 corrects or adds employees by hand. Before each run, `EmployeeSyncService`
 reads that tab with `ExcelReader` and writes the rows into Postgres'
 `funcionarios` table via `PostgresClient.upsert_employee`, matched by either
-`jira_email` or `clockify_email`. Rows whose email repeats earlier in the same
-sheet are split off as duplicates and written to the `DUPLICADOS_REMOVIDOS`
-tab instead of being synced.
+`jira_email` or `clockify_email`.
+
+**Duplicates:** the first row to use a given `jira_email` or `clockify_email`
+is synced normally; any later row that repeats either one is treated as a
+duplicate (`EmployeeSyncService._split_duplicates`), gets a reason attached,
+and is written to the `DUPLICADOS_REMOVIDOS` tab instead of being synced.
 
 **Runtime use:** `Settings.load_employee_registry` reads the already-synced
 `funcionarios` table and builds an `EmployeeRegistry`, used by `EtlService` to
 normalize `Task.assignee` (from Jira) and `TimeEntry.employee` (from Clockify)
 to the canonical name.
+
+**Employee photo:** `funcionarios.photo_url` holds the public Supabase Storage
+URL of the employee's photo, or `None` when no photo has been uploaded yet.
+`EmployeeSyncService` forwards the value read from `DIM_FUNCIONARIO` on every
+sync; this is the field the reporting dashboard (a separate repository)
+consumes to show each person's photo.
 
 **Unmapped employees:** if an employee is not found in the registry, they
 receive a visible sentinel value (`"Unmapped employee: <email>"`) instead of
@@ -58,6 +67,11 @@ Computed fields (`@computed_field`), used by the alert rule and notification tex
 | `days_remaining` | Days until deadline; negative if overdue; `None` if no deadline. |
 | `is_late` | `"SIM"` / `"NÃO"` / `None`. |
 | `deadline_status` | A value of `DeadlineStatus`. |
+
+`Notifier._build_message` never shows a negative `days_remaining` directly:
+for an overdue task, the notification line reads "Tarefa atrasada há N
+dia(s)" (with a positive N); for a task still within its deadline, "Dias
+restantes: N dia(s)"; with no deadline set, "Dias restantes: Indefinido".
 
 When Jira provides no assignee or area, the ETL uses the texts
 `"There is no one responsible."` and `"There is no one area."` instead of discarding the
@@ -165,14 +179,18 @@ BASE_HORAS (funcionario) ──── links to DIM_FUNCIONARIO by email
 
 ## Postgres schema
 
-Defined in `src/sop_pipeline/clients/postgres_client.py`. Table and column
-names mirror the schema already deployed in Supabase and stay in Portuguese
-for that reason; the upsert methods and `PostgresClient` itself are in
-English.
+Defined in `src/sop_pipeline/clients/postgres_client.py` as SQLAlchemy models
+(ORM), not raw SQL. The ORM was also chosen for the project's learning goal;
+see the corresponding design decision. Table and column names mirror the
+schema already deployed in Supabase and stay in Portuguese for that reason;
+the upsert methods and `PostgresClient` itself are in English. This schema
+runs in parallel with the spreadsheet, not instead of it: every pipeline
+write to `tarefas`, `horas`, `etiquetas`, and so on has a matching write to
+the corresponding `.xlsx` tab.
 
 | Table | Role | Upserted by |
 |---|---|---|
-| `funcionarios` | Employee identity, synced from `DIM_FUNCIONARIO`. | `upsert_employee` |
+| `funcionarios` | Employee identity, synced from `DIM_FUNCIONARIO`. Includes `photo_url`, the photo URL consumed by the dashboard. | `upsert_employee` |
 | `tarefas` | One row per Jira issue; `responsavel_id` is `NULL` when the employee could not be mapped. | `upsert_task` |
 | `detalhes_tarefa` | Long-form task description. | `upsert_task_detail` |
 | `horas` | One Clockify time entry; `funcionario_id` is `NULL` when the employee could not be mapped. | `upsert_time_entry` |

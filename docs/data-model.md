@@ -16,14 +16,23 @@ junção.
 adiciona colaboradores manualmente. Antes de cada execução, `EmployeeSyncService`
 lê essa aba com `ExcelReader` e grava as linhas na tabela `funcionarios` do
 Postgres via `PostgresClient.upsert_employee`, casando por `jira_email` ou
-`clockify_email`. Linhas com um e-mail repetido na mesma planilha são separadas
-como duplicatas e gravadas na aba `DUPLICADOS_REMOVIDOS` em vez de serem
-sincronizadas.
+`clockify_email`.
+
+**Duplicatas:** a primeira linha a usar um dado `jira_email` ou `clockify_email`
+é sincronizada normalmente; qualquer linha seguinte que repita um dos dois é
+tratada como duplicata (`EmployeeSyncService._split_duplicates`), recebe um
+motivo e é gravada na aba `DUPLICADOS_REMOVIDOS` em vez de ser sincronizada.
 
 **Uso em runtime:** `Settings.load_employee_registry` lê a tabela `funcionarios`
 já sincronizada e monta um `EmployeeRegistry`, usado pelo `EtlService` para
 normalizar `Task.assignee` (vindo do Jira) e `TimeEntry.employee` (vindo do
 Clockify) para o nome canônico.
+
+**Foto do colaborador:** `funcionarios.photo_url` guarda a URL pública do
+Supabase Storage da foto do colaborador, ou `None` quando nenhuma foto foi
+enviada ainda. `EmployeeSyncService` propaga o valor lido de `DIM_FUNCIONARIO`
+a cada sincronização; é esse campo que o dashboard de indicadores (repositório
+separado) consome para exibir a foto de cada pessoa.
 
 **Colaboradores não mapeados:** se um colaborador não é encontrado no registro,
 ele recebe um valor sentinela visível (`"Unmapped employee: <email>"`) em vez de
@@ -60,6 +69,11 @@ notificação — **não** são gravados na planilha, que tem as próprias fórm
 | `days_remaining` | Dias até o prazo; negativo se já venceu; `None` sem prazo. |
 | `is_late` | `"SIM"` / `"NÃO"` / `None`. |
 | `deadline_status` | Um valor de `DeadlineStatus`. |
+
+`Notifier._build_message` nunca mostra `days_remaining` negativo diretamente:
+para uma tarefa vencida, a linha da notificação vira "Tarefa atrasada há N
+dia(s)" (com N positivo); para uma tarefa no prazo, "Dias restantes: N
+dia(s)"; sem prazo definido, "Dias restantes: Indefinido".
 
 Quando o Jira não traz responsável ou área, o ETL usa os textos
 `"There is no one responsible."` e `"There is no one area."` em vez de descartar a
@@ -173,13 +187,18 @@ BASE_HORAS (funcionario) ──── liga-se a DIM_FUNCIONARIO por e-mail
 
 ## Esquema no Postgres
 
-Definido em `src/sop_pipeline/clients/postgres_client.py`. Nomes de tabela e de
-coluna espelham o schema já implantado no Supabase e por isso permanecem em
-português; os métodos de upsert e o próprio `PostgresClient` estão em inglês.
+Definido em `src/sop_pipeline/clients/postgres_client.py` como modelos
+SQLAlchemy (ORM), não como SQL cru. O ORM também foi escolhido pelo objetivo
+de aprendizado do projeto; ver a decisão de design correspondente. Nomes de
+tabela e de coluna espelham o schema já implantado no Supabase e por isso
+permanecem em português; os métodos de upsert e o próprio `PostgresClient`
+estão em inglês. Este schema roda em paralelo à planilha, não no lugar dela:
+toda gravação do pipeline em `tarefas`, `horas`, `etiquetas` etc. tem uma
+gravação equivalente na aba correspondente do `.xlsx`.
 
 | Tabela | Papel | Upsert por |
 |---|---|---|
-| `funcionarios` | Identidade de colaboradores, sincronizada a partir de `DIM_FUNCIONARIO`. | `upsert_employee` |
+| `funcionarios` | Identidade de colaboradores, sincronizada a partir de `DIM_FUNCIONARIO`. Inclui `photo_url`, a URL da foto usada pelo dashboard. | `upsert_employee` |
 | `tarefas` | Uma linha por issue do Jira; `responsavel_id` é `NULL` quando o colaborador não foi mapeado. | `upsert_task` |
 | `detalhes_tarefa` | Descrição longa de uma tarefa. | `upsert_task_detail` |
 | `horas` | Um apontamento de horas do Clockify; `funcionario_id` é `NULL` quando o colaborador não foi mapeado. | `upsert_time_entry` |
