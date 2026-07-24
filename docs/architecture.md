@@ -9,7 +9,14 @@ de sincronização isoladas entre si.
  1. StorageClient.download_file
     B2 ──────────────────────────────▶ planilha_temp.xlsx (disco local)
 
- 2. sync_jira
+ 2. EmployeeSyncService.sync
+    ExcelReader.read_employees        ── aba DIM_FUNCIONARIO
+        │  list[dict]
+        ▼
+    PostgresClient.upsert_employee  ─▶ tabela funcionarios (Postgres/Supabase)
+    ExcelWriter.save_duplicates     ─▶ aba DUPLICADOS_REMOVIDOS (linhas com e-mail repetido)
+
+ 3. sync_jira
     JiraClient.fetch_tasks(JIRA_JQL)          ── paginação por nextPageToken
         │  list[dict] cru
         ▼
@@ -20,8 +27,10 @@ de sincronização isoladas entre si.
     ExcelWriter.save_tasks    ─▶ aba BASE_TAREFAS
     ExcelWriter.save_tags     ─▶ abas DIM_ETIQUETAS + FATO_TAREFA_ETIQUETA
     ExcelWriter.save_details  ─▶ aba DETALHES_TAREFA
+    PostgresClient.upsert_task / upsert_task_detail / upsert_tag_and_link
+                               ─▶ tabelas tarefas, detalhes_tarefa, etiquetas, tarefa_etiqueta
 
- 3. sync_clockify
+ 4. sync_clockify
     ClockifyClient.list_users
         │  para cada usuário:
         ▼
@@ -31,27 +40,31 @@ de sincronização isoladas entre si.
     EtlService.transform_time_entries ─▶ list[TimeEntry]
         │
         ▼
-    ExcelWriter.save_hours    ─▶ aba BASE_HORAS
+    ExcelWriter.save_hours       ─▶ aba BASE_HORAS
+    PostgresClient.upsert_time_entry ─▶ tabela horas
 
- 4. StorageClient.upload_file
+ 5. StorageClient.upload_file
     planilha_temp.xlsx ──────────────▶ B2   (sobrescreve o objeto)
 
- 5. process_alerts (usa as Tasks da etapa 2)
+ 6. process_alerts (usa as Tasks da etapa 3)
     AlertService.tasks_to_alert  ─▶ list[Task] dentro da janela de alerta
         │
         ▼
     Notifier.send_alert ─▶ POST no webhook do Teams da área da tarefa
 
- 6. Heartbeat
+ 7. Heartbeat
     GET BETTERSTACK_HEARTBEAT_URL   ── só é alcançado se o upload deu certo
 ```
+
+O Postgres roda em paralelo à planilha, não no lugar dela: as etapas 3 e 4
+gravam as mesmas informações nos dois destinos, um upsert por linha em cada.
 
 ## Camadas
 
 | Camada | Módulos | Regra |
 |---|---|---|
-| **Clients** | `clients/jira_client.py`, `clients/clockify_client.py` | Só falam HTTP e paginação. Devolvem `dict` cru, sem interpretar nada. |
-| **Services** | `services/etl_service.py`, `services/alert_service.py` | Regra de negócio pura. Não fazem I/O de rede nem de arquivo. |
+| **Clients** | `clients/jira_client.py`, `clients/clockify_client.py`, `clients/postgres_client.py` | Falam HTTP/SQL e paginação. `PostgresClient` faz upsert no schema Supabase via SQLAlchemy; os outros dois devolvem `dict` cru, sem interpretar nada. |
+| **Services** | `services/etl_service.py`, `services/alert_service.py`, `services/employee_sync_service.py` | Regra de negócio. `EtlService` e `AlertService` não fazem I/O de rede nem de arquivo; `EmployeeSyncService` é a exceção deliberada, já que orquestra `ExcelReader` e `PostgresClient` para sincronizar `DIM_FUNCIONARIO`. |
 | **Integrations** | `integrations/excel_writer.py`, `notifier.py`, `storage_client.py` | Saídas do pipeline. Cada uma conhece um destino externo. |
 | **Models** | `models/schemas.py` | Contrato entre as camadas. Validação via Pydantic. |
 | **Config** | `config/settings.py` | Único ponto que lê o ambiente. |

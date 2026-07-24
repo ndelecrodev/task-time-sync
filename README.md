@@ -57,9 +57,13 @@ compartilhada entre a planilha e o banco.
 
 `EmployeeSyncService` roda antes do restante do pipeline em cada execução: lê a
 aba `DIM_FUNCIONARIO` da planilha (a fonte editável do cadastro) e sincroniza as
-linhas com a tabela `funcionarios` no Postgres. Só depois disso `EtlService`
-carrega o registro já sincronizado para normalizar responsáveis do Jira e
-colaboradores do Clockify para um nome canônico comum.
+linhas com a tabela `funcionarios` no Postgres. A primeira linha com um dado
+e-mail é sincronizada normalmente; as seguintes que repetem o mesmo e-mail são
+desviadas para a aba `DUPLICADOS_REMOVIDOS` em vez de sobrescrever o cadastro
+existente. A tabela `funcionarios` também guarda `photo_url`, a foto do
+colaborador consumida pelo dashboard de indicadores. Só depois da
+sincronização `EtlService` carrega o registro já sincronizado para normalizar
+responsáveis do Jira e colaboradores do Clockify para um nome canônico comum.
 
 Detalhes em [`docs/architecture.md`](docs/architecture.md),
 [`docs/data-model.md`](docs/data-model.md) e

@@ -8,7 +8,14 @@ An execution (`sop_pipeline.pipeline.run`) is a linear sequence with three isola
  1. StorageClient.download_file
     B2 ──────────────────────────────▶ planilha_temp.xlsx (local disk)
 
- 2. sync_jira
+ 2. EmployeeSyncService.sync
+    ExcelReader.read_employees        ── DIM_FUNCIONARIO tab
+        │  list[dict]
+        ▼
+    PostgresClient.upsert_employee  ─▶ funcionarios table (Postgres/Supabase)
+    ExcelWriter.save_duplicates     ─▶ DUPLICADOS_REMOVIDOS tab (repeated-email rows)
+
+ 3. sync_jira
     JiraClient.fetch_tasks(JIRA_JQL)          ── pagination by nextPageToken
         │  raw list[dict]
         ▼
@@ -19,8 +26,10 @@ An execution (`sop_pipeline.pipeline.run`) is a linear sequence with three isola
     ExcelWriter.save_tasks    ─▶ tab BASE_TAREFAS
     ExcelWriter.save_tags     ─▶ tabs DIM_ETIQUETAS + FATO_TAREFA_ETIQUETA
     ExcelWriter.save_details  ─▶ tab DETALHES_TAREFA
+    PostgresClient.upsert_task / upsert_task_detail / upsert_tag_and_link
+                               ─▶ tarefas, detalhes_tarefa, etiquetas, tarefa_etiqueta tables
 
- 3. sync_clockify
+ 4. sync_clockify
     ClockifyClient.list_users
         │  for each user:
         ▼
@@ -30,27 +39,32 @@ An execution (`sop_pipeline.pipeline.run`) is a linear sequence with three isola
     EtlService.transform_time_entries ─▶ list[TimeEntry]
         │
         ▼
-    ExcelWriter.save_hours    ─▶ tab BASE_HORAS
+    ExcelWriter.save_hours       ─▶ tab BASE_HORAS
+    PostgresClient.upsert_time_entry ─▶ horas table
 
- 4. StorageClient.upload_file
+ 5. StorageClient.upload_file
     planilha_temp.xlsx ──────────────▶ B2   (overwrites the object)
 
- 5. process_alerts (uses Tasks from step 2)
+ 6. process_alerts (uses Tasks from step 3)
     AlertService.tasks_to_alert  ─▶ list[Task] within alert window
         │
         ▼
     Notifier.send_alert ─▶ POST to Teams webhook for the task's area
 
- 6. Heartbeat
+ 7. Heartbeat
     GET BETTERSTACK_HEARTBEAT_URL   ── only reached if upload succeeded
 ```
+
+Postgres runs in parallel with the spreadsheet, not instead of it: steps 3
+and 4 write the same information to both destinations, one upsert per row
+in each.
 
 ## Layers
 
 | Layer | Modules | Rule |
 |---|---|---|
-| **Clients** | `clients/jira_client.py`, `clients/clockify_client.py` | Only speak HTTP and pagination. Return raw `dict`, without interpreting anything. |
-| **Services** | `services/etl_service.py`, `services/alert_service.py` | Pure business logic. No network or file I/O. |
+| **Clients** | `clients/jira_client.py`, `clients/clockify_client.py`, `clients/postgres_client.py` | Speak HTTP/SQL and pagination. `PostgresClient` upserts into the Supabase schema through SQLAlchemy; the other two return raw `dict`, without interpreting anything. |
+| **Services** | `services/etl_service.py`, `services/alert_service.py`, `services/employee_sync_service.py` | Business logic. `EtlService` and `AlertService` do no network or file I/O; `EmployeeSyncService` is the deliberate exception, since it orchestrates `ExcelReader` and `PostgresClient` to sync `DIM_FUNCIONARIO`. |
 | **Integrations** | `integrations/excel_writer.py`, `notifier.py`, `storage_client.py` | Pipeline outputs. Each knows one external destination. |
 | **Models** | `models/schemas.py` | Contract between layers. Validation via Pydantic. |
 | **Config** | `config/settings.py` | Single point that reads the environment. |

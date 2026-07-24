@@ -36,6 +36,11 @@ class Notifier:
     def _build_message(task: Task) -> str:
         """Render the HTML body of the alert.
 
+        The days-remaining line switches label and wording depending on the
+        task's state: an overdue task reads "Tarefa atrasada há N dia(s)"
+        instead of a negative count, an on-time task reads "Dias restantes: N
+        dia(s)", and a task with no due date reads "Dias restantes: Indefinido".
+
         Args:
             task: The task the alert is about.
 
@@ -48,8 +53,15 @@ class Notifier:
             deadline_text = "Sem prazo definido"
 
         if task.days_remaining is not None:
-            days_text = f"{task.days_remaining} dia(s)"
+            
+            if task.days_remaining < 0:
+                days_label = "Tarefa atrasada há"
+                days_text = f"{abs(task.days_remaining)} dia(s)"
+            else:  
+                days_label = "Dias restantes"
+                days_text = f"{task.days_remaining} dia(s)"
         else:
+            days_label = "Dias restantes"
             days_text = "Indefinido"
 
         return (
@@ -57,7 +69,7 @@ class Notifier:
             f"<b>Tarefa:</b> {task.title}<br>"
             f"<b>Prioridade:</b> {task.priority.value}<br>"
             f"<b>Prazo:</b> {deadline_text}<br>"
-            f"<b>Dias restantes:</b> {days_text}<br>"
+            f"<b>{days_label}:</b> {days_text}<br>"
             f"<b>Status:</b> {task.status}<br><br>"
             "<b>Responsável:</b> "
         )

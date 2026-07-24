@@ -72,6 +72,7 @@ class EmployeeSyncService:
                 canonical_name=row["nome"],
                 jira_email=row["jira_email"],
                 clockify_email=row["clockify_email"],
+                photo_url=row["photo_url"],
             )
 
         if duplicate_rows:

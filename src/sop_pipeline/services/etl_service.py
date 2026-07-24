@@ -308,8 +308,6 @@ class EtlService:
             try:
                 user_id = entry.get("userId", "Unknown")
                 email = email_by_user_id.get(user_id, UNKNOWN_EMAIL)
-
-                # Normalize the employee email to canonical name
                 employee = self.normalize_employee_identifier(email)
 
                 raw_duration = entry["timeInterval"]["duration"]

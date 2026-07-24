@@ -50,12 +50,10 @@ class EmployeeRegistry:
         self._by_clockify_email: dict[str, str] = {}
         self._by_canonical_name: dict[str, EmployeeMapping] = {}
 
-        # Build indices and detect conflicts
         for employee in employees:
             jira_lower = employee.jira_email.lower()
             clockify_lower = employee.clockify_email.lower()
 
-            # Check for Jira email conflicts
             if jira_lower in self._by_jira_email:
                 existing = self._by_jira_email[jira_lower]
                 if existing != employee.canonical_name:
@@ -66,7 +64,6 @@ class EmployeeRegistry:
                     )
             self._by_jira_email[jira_lower] = employee.canonical_name
 
-            # Check for Clockify email conflicts
             if clockify_lower in self._by_clockify_email:
                 existing = self._by_clockify_email[clockify_lower]
                 if existing != employee.canonical_name:
@@ -76,15 +73,13 @@ class EmployeeRegistry:
                         f"(duplicate email in config)"
                     )
             self._by_clockify_email[clockify_lower] = employee.canonical_name
-
-            # Index by canonical name
             self._by_canonical_name[employee.canonical_name] = employee
 
     def resolve(self, identifier: str) -> str | None:
         """Resolve an email or canonical name to its canonical form.
 
         Tries matching against Jira email, Clockify email, or canonical name,
-        in that order. Case-insensitive for email addresses.
+        in that order. Case-insensitive throughout.
 
         Args:
             identifier: A Jira email, Clockify email, canonical name, or unknown value.
@@ -94,15 +89,12 @@ class EmployeeRegistry:
         """
         identifier_lower = identifier.lower()
 
-        # Try Jira email
         if identifier_lower in self._by_jira_email:
             return self._by_jira_email[identifier_lower]
 
-        # Try Clockify email
         if identifier_lower in self._by_clockify_email:
             return self._by_clockify_email[identifier_lower]
 
-        # Try canonical name (case-insensitive)
         for canonical in self._by_canonical_name:
             if canonical.lower() == identifier_lower:
                 return canonical

@@ -172,3 +172,81 @@ manualmente com um valor fora da lista é bloqueado.
 **Cuidado ao mexer nisso:** se o workflow do Jira mudar (status renomeado,
 adicionado ou removido), essa lista precisa ser atualizada manualmente no
 Excel. Não há sincronização automática entre as duas.
+
+## 12. Identidade de colaboradores saiu de EMPLOYEES_JSON para uma tabela no Postgres, com o Excel como front-end editável
+
+Antes, o mapeamento de colaboradores vivia em uma variável de ambiente
+(`EMPLOYEES_JSON`), um blob JSON lido na inicialização de `Settings`. Hoje
+`Settings.load_employee_registry` lê a tabela `funcionarios` do Postgres, e
+`EmployeeSyncService` é quem mantém essa tabela, sincronizando-a a partir da
+aba `DIM_FUNCIONARIO` da planilha antes de cada execução.
+
+**Por quê:** um blob JSON em variável de ambiente só podia ser editado por
+quem tinha acesso ao `.env` e sabia a sintaxe correta; um erro de digitação
+quebrava a leitura do cadastro inteiro de colaboradores. Mover a fonte de
+verdade para uma tabela relacional, editável através de uma planilha que a
+equipe já usa no dia a dia (`DIM_FUNCIONARIO`), tira a barreira técnica de
+manter o cadastro atualizado. O Postgres também deixa esse cadastro
+disponível para outros consumidores, como o dashboard.
+
+**Trade-off:** a inicialização do pipeline agora depende de o banco estar
+acessível. `load_employee_registry` propaga `SQLAlchemyError` quando a
+conexão falha, algo que o blob JSON local nunca precisou considerar. A
+sincronização de colaboradores também virou um passo a mais no início de
+cada execução, e precisa terminar antes de qualquer normalização de nomes.
+
+## 13. SQLAlchemy foi escolhido como ORM, não Core ou psycopg cru
+
+`PostgresClient` usa classes declarativas do SQLAlchemy (`Funcionarios`,
+`Tarefas`, etc.) e objetos `Session`, em vez de escrever SQL diretamente com
+`psycopg` ou usar a camada `Core` do próprio SQLAlchemy.
+
+**Por quê:** parte da motivação é o objetivo de aprendizado do projeto. Este
+projeto também é um espaço para praticar ORM em um caso real, com upserts,
+relações e constraints. Como efeito colateral, o ORM também tira SQL do
+resto do código: os upserts em `PostgresClient` viram atribuição de atributo
+Python (`existing.canonical_name = ...`) em vez de `UPDATE ... SET`
+montado à mão.
+
+**Trade-off:** cada upsert abre sua própria `Session` e faz um `SELECT`
+antes do `INSERT`/`UPDATE` (ver `upsert_employee`, `upsert_task`, etc.), o
+que é menos eficiente que um `INSERT ... ON CONFLICT` nativo do Postgres.
+Para o volume atual do pipeline (algumas centenas de linhas por execução)
+isso não é um problema; vale revisitar se o volume crescer.
+
+## 14. `person.area` no dashboard é derivado das áreas das tarefas, não de uma tabela de área por colaborador no Postgres
+
+O Excel tem `FATO_FUNCIONARIO_AREA`, uma relação N:N dedicada entre
+colaborador e área (ver decisão 4). O schema do Postgres não tem
+equivalente: não existe uma tabela `funcionario_area`. Quando o dashboard
+precisa da área de uma pessoa, deriva esse valor a partir das áreas das
+tarefas atribuídas a ela em `tarefas.area`.
+
+**Por quê:** `FATO_FUNCIONARIO_AREA` nasceu no Excel para o dashboard
+baseado em planilha; replicar essa tabela ao migrar os indicadores para o
+Postgres significaria manter mais um cadastro sincronizado, sem que exista
+hoje uma necessidade que a área das tarefas não cubra. Na prática, quem
+trabalha majoritariamente em tarefas de uma área também pertence a ela.
+
+**Trade-off:** um colaborador sem tarefas atribuídas em um período não tem
+área derivável no Postgres, diferente do Excel, onde a área da pessoa é
+cadastrada explicitamente. Se essa lacuna passar a importar, o caminho é
+adicionar uma tabela `funcionario_area` no Postgres espelhando
+`FATO_FUNCIONARIO_AREA`.
+
+## 15. O alerta mostra "Tarefa atrasada há N dia(s)" em vez do número negativo de `days_remaining`
+
+`Task.days_remaining` é negativo por design para tarefas vencidas (decisão
+2). `Notifier._build_message`, porém, nunca expõe esse negativo no texto:
+quando `days_remaining < 0`, troca o rótulo para "Tarefa atrasada há" e
+mostra `abs(days_remaining)`.
+
+**Por quê:** "-3 dias restantes" exige que quem lê faça a conta mental
+(negativo significa atrasado, e por quantos dias). "Tarefa atrasada há 3
+dia(s)" comunica a mesma informação sem esse passo extra, para um texto lido
+rapidamente dentro de uma notificação do Teams.
+
+**Cuidado ao mexer nisso:** a inversão de sinal (`abs()`) e a troca de
+rótulo precisam andar juntas. Mudar uma sem a outra produz uma mensagem como
+"Dias restantes: -3 dia(s)" ou "Tarefa atrasada há -3 dia(s)", ambas
+incoerentes com o resto do texto.

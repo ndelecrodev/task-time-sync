@@ -122,3 +122,104 @@ Every `__init__.py` has only a docstring; modules are imported by full path.
 
 **Why:** `config/settings.py` instantiates `Settings()` on import, which reads and validates the `.env`. With reexportation in `integrations/__init__.py`, importing
 `ExcelWriter` would pull in `Notifier`, which would pull in settings — and would suddenly require a complete `.env` just to write to a local spreadsheet. Without reexportation, `ExcelWriter` is testable in isolation.
+
+## 11. Excel status validation is a manual copy of the Jira workflow
+
+The validation dropdown on `BASE_TAREFAS.status` uses the list `Backlog, To
+Do, In Progress, Code Review, Testing, Done`, copied from the workflow
+configured in Jira on 2026-07-22.
+
+**Why:** unlike `tipo` (`TaskType`, an enum validated in
+`models/schemas.py`), `status` is free text coming straight from Jira; there
+is no Python-side enum for that column. A fixed list in code would run the
+same risk that already materialized with `tipo` (issue `QT-6`, with
+`task_type="Function"` outside the enum, was silently dropped from the
+report). That is why the status list does not live in code: it lives only
+in Excel's dropdown validation, and has to be copied by hand from Jira.
+
+**Trade-off:** this validation only protects manual editing of the
+spreadsheet. The pipeline overwrites `status` on every run with the value
+straight from Jira, without going through Excel's validation, so a new Jira
+status shows up in the report even when it is not on the dropdown list, but
+editing the cell by hand with a value outside the list is blocked.
+
+**Caution when touching this:** if the Jira workflow changes (a status
+renamed, added, or removed), this list has to be updated by hand in Excel.
+There is no automatic sync between the two.
+
+## 12. Employee identity moved from EMPLOYEES_JSON to a Postgres table, with Excel as the editable front end
+
+Employee mapping used to live in an environment variable (`EMPLOYEES_JSON`),
+a JSON blob read at `Settings` startup. Today `Settings.load_employee_registry`
+reads the `funcionarios` table in Postgres, and `EmployeeSyncService` is what
+keeps that table current, syncing it from the workbook's `DIM_FUNCIONARIO`
+tab before every run.
+
+**Why:** a JSON blob in an environment variable could only be edited by
+whoever had access to the `.env` file and knew the right syntax; a single
+typo broke the mapping for the whole employee roster. Moving the source
+of truth to a relational table, editable through a spreadsheet the team
+already uses day to day (`DIM_FUNCIONARIO`), removes the technical barrier
+to keeping the registry current. Postgres also makes that registry
+available to other consumers, such as the dashboard.
+
+**Trade-off:** pipeline startup now depends on the database being
+reachable. `load_employee_registry` propagates `SQLAlchemyError` when the
+connection fails, something the local JSON blob never needed to account
+for. Employee sync also became one more step at the start of every run,
+one that has to complete before any name normalization.
+
+## 13. SQLAlchemy was chosen as the ORM, not Core or raw psycopg
+
+`PostgresClient` uses SQLAlchemy declarative classes (`Funcionarios`,
+`Tarefas`, and so on) and `Session` objects, instead of writing SQL directly
+with `psycopg` or using SQLAlchemy's own `Core` layer.
+
+**Why:** part of the motivation is the project's learning goal. This
+project is also a space to practice ORM usage on a real case, with upserts,
+relationships, and constraints. As a side effect, the ORM also keeps SQL
+out of the rest of the code: upserts in `PostgresClient` read as Python
+attribute assignment (`existing.canonical_name = ...`) instead of hand-built
+`UPDATE ... SET` statements.
+
+**Trade-off:** every upsert opens its own `Session` and runs a `SELECT`
+before the `INSERT`/`UPDATE` (see `upsert_employee`, `upsert_task`, and so
+on), which is less efficient than a native Postgres `INSERT ... ON
+CONFLICT`. For the pipeline's current volume (a few hundred rows per run)
+that is not a problem; it is worth revisiting if volume grows.
+
+## 14. `person.area` in the dashboard is derived from task areas, not from a per-employee area table in Postgres
+
+Excel has `FATO_FUNCIONARIO_AREA`, a dedicated N:N relationship between
+employee and area (see decision 4). The Postgres schema has no equivalent:
+there is no `funcionario_area` table. When the dashboard needs a person's
+area, it derives that value from the areas of the tasks assigned to them in
+`tarefas.area`.
+
+**Why:** `FATO_FUNCIONARIO_AREA` originated in Excel for the
+spreadsheet-based dashboard; replicating that table while migrating
+indicators to Postgres would mean keeping one more registry in sync,
+without a need today that task area doesn't already cover. In practice,
+whoever works mostly on tasks in an area also belongs to it.
+
+**Trade-off:** an employee with no assigned tasks in a period has no
+derivable area in Postgres, unlike Excel, where a person's area is
+registered explicitly. If that gap starts to matter, the path is adding a
+`funcionario_area` table in Postgres mirroring `FATO_FUNCIONARIO_AREA`.
+
+## 15. The alert shows "Tarefa atrasada há N dia(s)" instead of `days_remaining`'s negative number
+
+`Task.days_remaining` is negative by design for overdue tasks (decision 2).
+`Notifier._build_message`, though, never exposes that negative number in
+the text: when `days_remaining < 0`, it swaps in the label "Tarefa atrasada
+há" and shows `abs(days_remaining)`.
+
+**Why:** "-3 dias restantes" is a phrase that makes the reader do the
+mental math (negative means overdue, and by how many days). "Tarefa
+atrasada há 3 dia(s)" communicates the same information without that extra
+step, for text that gets read quickly inside a Teams notification.
+
+**Caution when touching this:** the sign flip (`abs()`) and the label swap
+have to move together. Changing one without the other produces a message
+like "Dias restantes: -3 dia(s)" or "Tarefa atrasada há -3 dia(s)", both
+incoherent with the rest of the text.
