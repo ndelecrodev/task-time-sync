@@ -78,6 +78,7 @@ def sync_jira(etl: EtlService, postgres_client: PostgresClient, name_to_id: dict
     # archived just because our own parsing rejected it.
     all_ids_from_jira = {issue["key"] for issue in raw_issues}
     postgres_client.archive_missing_tasks(all_ids_from_jira)
+    ExcelWriter.mark_archived_tasks(settings.TEMP_EXCEL_PATH, postgres_client.get_archived_tasks())
 
     # A discarded count well above zero means issues are vanishing from the
     # report — usually a Jira priority or issue type missing from the enums.

@@ -283,11 +283,36 @@ the next successful `sync_jira` would have no way to recover what was lost.
 Marking with a timestamp instead of deleting keeps the problem visible and
 reversible.
 
-**Trade-off:** the set used to decide what to archive is `valid_ids`, the
-tasks that passed Pydantic validation (decision 8), not the raw total of
-issues Jira returned. An issue that still exists in Jira but got discarded
-for an out-of-enum value (unknown `priority`/`tipo`) is archived as if it
-had disappeared, even though it is still active on the Jira side. This is
-consistent with the rest of the pipeline, which already treats an invalid
-record as absent from the report, but it's worth knowing when investigating
-why a task got archived.
+**Trade-off:** Caution when touching this: the set used to decide what to
+archive must be `all_ids_from_jira` (every issue key the raw Jira fetch
+returned, before any validation), not `valid_ids` (the tasks that already
+passed Pydantic validation, decision 8). Using `valid_ids` would archive an
+issue discarded by validation (an out-of-enum `priority`/`tipo`, for
+example) as if it had disappeared from Jira, even though it is still active
+there, conflating "didn't come back in this fetch" with "came back, but
+failed validation." That was, in fact, an early version's bug, fixed before
+it reached production.
+
+## 19. Archiving is also marked in the spreadsheet, in a column that only ever receives that one write
+
+`BASE_TAREFAS` gained an `arquivada_em` column, mirroring the column of the
+same name in `tarefas` (decision 18). `ExcelWriter.mark_archived_tasks` runs
+at the end of `sync_jira`, right after `archive_missing_tasks`, and fetches
+the already-archived tasks through `PostgresClient.get_archived_tasks` to
+write the archive date into the spreadsheet.
+
+**Why:** before this change, an archived task was only flagged in Postgres;
+whoever opened the spreadsheet had no way to tell that a `BASE_TAREFAS` row
+belonged to a task that had already disappeared from Jira, short of
+querying the database directly. Writing the same flag into the spreadsheet
+makes that information visible to anyone working from Excel alone.
+
+**Trade-off:** `mark_archived_tasks` writes only the `arquivada_em` cell; it
+never calls `_write_task_row` or any other path that would rewrite
+`titulo`, `status`, `prazo`, or any other field on the row. This is
+deliberate: an archived task no longer receives updates from Jira, so its
+other fields must stay frozen at the last real value they held before the
+task dropped out of the fetch, not get overwritten or cleared. If a
+`task_id` coming from Postgres has no matching row in `BASE_TAREFAS` (it
+shouldn't, since the task was written there before being archived), the
+method skips it instead of raising.
