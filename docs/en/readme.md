@@ -83,22 +83,27 @@ Details in [`docs/en/architecture.md`](architecture.md),
 
 ## Installation
 
-Requires **Python 3.11+**.
+Requires **Python 3.11+** and [Poetry](https://python-poetry.org/).
 
-```bash
-python -m venv .venv
+There are two installation scenarios, with different commands:
 
-# Windows
-.venv\Scripts\activate
-# Linux / macOS
-source .venv/bin/activate
+- **Just running the pipeline** (production/CI runtime use): installs only
+  the runtime dependencies.
 
-pip install -r requirements.txt
-pip install -e .
-```
+  ```bash
+  poetry install
+  ```
 
-The `pip install -e .` is necessary: the package lives in `src/`, and it's what puts
-`sop_pipeline` on the path.
+- **Developing/testing** (running `pytest`, `pylint`, `black` locally):
+  installs the runtime **and** development dependencies, via the `dev` extra.
+
+  ```bash
+  poetry install --extras dev
+  ```
+
+In both cases, Poetry creates the virtual environment (outside the project
+folder) and installs the package itself in editable mode — no more manual
+`venv` or `pip install -e .` step.
 
 ---
 
@@ -150,17 +155,21 @@ The **actual value stays only in the local `.env`** and is not published to this
 
 ## How to run
 
-With `.env` filled and the environment activated:
+With `.env` filled:
 
 ```bash
-python main.py
+poetry run python main.py
 ```
 
-Or, via the script installed by `pip install -e .`:
+Or, via the script installed by the package:
 
 ```bash
-sop-pipeline
+poetry run sop-pipeline
 ```
+
+If you'd rather not prefix every command with `poetry run`, use `poetry shell`
+to activate an interactive session inside the environment and run the
+commands normally.
 
 A complete execution:
 
@@ -180,13 +189,16 @@ Steps 3, 4, and 6 are isolated from each other: if Jira is down, Clockify hours 
 
 ## Development
 
-```bash
-pip install -e ".[dev]"
+Development dependencies need the `dev` extra (see
+[Installation](#installation)): `poetry install --extras dev`.
 
-black src main.py tests      # formatting
-pylint src main.py tests     # lint
-pytest                       # tests
+```bash
+poetry run black src main.py tests      # formatting
+poetry run pylint src main.py tests     # lint
+poetry run pytest                       # tests
 ```
+
+Or activate `poetry shell` and run the commands above without the `poetry run` prefix.
 
 `black` and `pylint` are configured in `pyproject.toml` (100-column line limit).
 

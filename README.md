@@ -90,22 +90,27 @@ Detalhes em [`docs/architecture.md`](docs/architecture.md),
 
 ## Instalação
 
-Requer **Python 3.11+**.
+Requer **Python 3.11+** e [Poetry](https://python-poetry.org/).
 
-```bash
-python -m venv .venv
+Existem dois cenários de instalação, com comandos diferentes:
 
-# Windows
-.venv\Scripts\activate
-# Linux / macOS
-source .venv/bin/activate
+- **Só rodar o pipeline** (uso em produção/CI de execução): instala apenas as
+  dependências de runtime.
 
-pip install -r requirements.txt
-pip install -e .
-```
+  ```bash
+  poetry install
+  ```
 
-O `pip install -e .` é necessário: o pacote vive em `src/`, e é ele quem coloca
-`sop_pipeline` no path.
+- **Desenvolver/testar** (rodar `pytest`, `pylint`, `black` localmente): instala
+  as dependências de runtime **e** as de desenvolvimento, via o extra `dev`.
+
+  ```bash
+  poetry install --extras dev
+  ```
+
+Em ambos os casos, o Poetry cria o ambiente virtual (fora da pasta do projeto)
+e instala o próprio pacote em modo editável — não há mais nenhum passo manual
+de `venv` ou `pip install -e .`.
 
 ---
 
@@ -162,17 +167,21 @@ porque a query contém o identificador do projeto Jira, que não deve ser públi
 
 ## Como rodar
 
-Com o `.env` preenchido e o ambiente ativado:
+Com o `.env` preenchido:
 
 ```bash
-python main.py
+poetry run python main.py
 ```
 
-Ou, via o script instalado pelo `pip install -e .`:
+Ou, via o script instalado pelo pacote:
 
 ```bash
-sop-pipeline
+poetry run sop-pipeline
 ```
+
+Se preferir não prefixar cada comando com `poetry run`, use `poetry shell`
+para ativar uma sessão interativa dentro do ambiente e rode os comandos
+normalmente.
 
 Uma execução completa:
 
@@ -194,13 +203,16 @@ Clockify ainda são coletadas. Falhas são logadas e enviadas ao Sentry.
 
 ## Desenvolvimento
 
-```bash
-pip install -e ".[dev]"
+As dependências de desenvolvimento precisam do extra `dev` (veja
+[Instalação](#instalação)): `poetry install --extras dev`.
 
-black src main.py tests      # formatação
-pylint src main.py tests     # lint
-pytest                       # testes
+```bash
+poetry run black src main.py tests      # formatação
+poetry run pylint src main.py tests     # lint
+poetry run pytest                       # testes
 ```
+
+Ou ative `poetry shell` e rode os comandos acima sem o prefixo `poetry run`.
 
 `black` e `pylint` são configurados no `pyproject.toml` (linha de 100 colunas).
 
