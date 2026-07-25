@@ -123,14 +123,18 @@ Conventions for the `.xlsx` file: tab name in UPPERCASE, table name in lowercase
 
 | Tab | Table | Columns | Written by |
 |---|---|---|---|
-| `BASE_TAREFAS` | `base_tarefas` | id, titulo, responsavel, area, prioridade, status, data_criacao, prazo, data_conclusao, **dias_restantes**, **atrasado**, **status_prazo**, tipo, criador, data_atualizacao | `save_tasks` |
+| `BASE_TAREFAS` | `base_tarefas` | id, titulo, responsavel, area, prioridade, status, data_criacao, prazo, data_conclusao, **dias_restantes**, **atrasado**, **status_prazo**, tipo, criador, data_atualizacao, arquivada_em | `save_tasks` |
 | `DETALHES_TAREFA` | `detalhes_tarefa` | id, descricao | `save_details` |
 | `BASE_HORAS` | `base_horas` | id, funcionario, data, horas | `save_hours` |
 | `DIM_ETIQUETAS` | `dim_etiquetas` | id_etiqueta, nome_etiqueta | `save_tags` |
 | `FATO_TAREFA_ETIQUETA` | `fato_tarefa_etiqueta` | id_tarefa, id_etiqueta | `save_tags` |
 
 The three columns in **bold** are calculated by Excel formula; Python
-only copies the formula text when creating a new row.
+only copies the formula text when creating a new row. `arquivada_em` breaks
+the pattern too: it's written by `ExcelWriter.mark_archived_tasks`, not
+`save_tasks`, and it's the only column still touched on a row once the task
+has dropped out of Jira — every other field on an archived row stays frozen
+at its last known value, by design (see design decision #19).
 
 `Task` → `BASE_TAREFAS` is defined by the dict `TASK_COLUMN_MAP` in
 `integrations/excel_writer.py`. The left side is the literal column header in the

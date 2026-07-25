@@ -133,6 +133,43 @@ class ExcelWriter:
             raise ExcelWriteError(f"Failed to save tasks to {file_path}: {error}") from error
 
     @staticmethod
+    def mark_archived_tasks(file_path: str, archived_tasks) -> None:
+        """Write the archived date into BASE_TAREFAS for already-archived tasks.
+
+        Only the arquivada_em column is touched; every other field on
+        these rows keeps its last known value from before the task
+        disappeared from Jira, by design (see design-decisions.md).
+
+        Args:
+            file_path: Path to the local workbook.
+            archived_tasks: Rows with task_id and arquivada_em, as
+                returned by PostgresClient.get_archived_tasks.
+
+        Raises:
+            ExcelWriteError: If the workbook cannot be updated or saved.
+        """
+        try:
+            workbook = open_workbook(file_path)
+            worksheet = workbook["BASE_TAREFAS"]
+            table = worksheet.tables["base_tarefas"]
+            column_map = create_column_map(worksheet=worksheet, table=table)
+
+            for task in archived_tasks:
+                row = find_row(worksheet, task.task_id, table)
+                if row is None:
+                    continue
+                cell = worksheet.cell(
+                    row=row, column=column_map["arquivada_em"], value=task.arquivada_em.date()
+                )
+                cell.number_format = "DD/MM/YYYY"
+
+            workbook.save(file_path)
+        except (OSError, KeyError, ValueError) as error:
+            raise ExcelWriteError(
+                f"Failed to mark archived tasks in {file_path}: {error}"
+            ) from error
+
+    @staticmethod
     def _get_or_create_tag_id(worksheet, table, tag_name: str) -> int:
         """Return a tag's ID, creating the dimension row if it does not exist.
 
