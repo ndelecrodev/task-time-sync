@@ -1,6 +1,6 @@
 [English version](docs/en/readme.md)
 
-# SOP Pipeline
+# Task Time Sync
 
 Pipeline em Python que consolida **Jira** (tarefas) e **Clockify** (horas
 apontadas) em uma planilha Excel hospedada no **Backblaze B2** e em um schema
@@ -138,6 +138,22 @@ comentário explicando onde obter o valor. Resumo:
 | Teams | `WEBHOOK_TI`, `WEBHOOK_SOP`, `WEBHOOK_IA`, `WEBHOOK_FRONT`, `WEBHOOK_DESIGN`, `WEBHOOK_DATA`, `WEBHOOK_BACK`, `WEBHOOK_NO_AREA` |
 | Backblaze B2 | `B2_ENDPOINT_URL`, `B2_BUCKET_NAME`, `B2_APPLICATION_KEY`, `B2_KEY_ID`, `EXCEL_CLOUD_NAME`, `TEMP_EXCEL_PATH` |
 | Observabilidade | `SENTRY_DSN`, `BETTERSTACK_HEARTBEAT_URL`, `BETTERSTACK_SOURCE_TOKEN`, `BETTERSTACK_INGESTING_HOST` |
+
+### Obtendo o WORKSPACE_ID do Clockify
+
+O `WORKSPACE_ID` não aparece em nenhum lugar da interface do Clockify — ele só
+existe na resposta da API. Não há atualmente nenhum script auxiliar no
+repositório para buscar esse valor, então o jeito mais direto é uma chamada à
+API usando a mesma chave já configurada em `API_KEY_CLOCKIFY`:
+
+```bash
+curl -H "X-Api-Key: SUA_CHAVE_AQUI" https://api.clockify.me/api/v1/workspaces
+```
+
+A resposta é uma lista JSON com todos os workspaces aos quais sua conta tem
+acesso. Localize o objeto cujo campo `name` corresponde ao nome do seu
+workspace e copie o valor do campo `id` — esse é o `WORKSPACE_ID` a ser usado
+no `.env`.
 
 ### A conexão com o Postgres (`DATABASE_URL`)
 
