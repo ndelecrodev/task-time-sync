@@ -310,11 +310,4 @@ que continuam existindo no Jira, e o próximo `sync_jira` bem-sucedido não
 teria como recuperar o que foi perdido. Marcar com timestamp em vez de
 apagar deixa o problema visível e reversível.
 
-**Trade-off:** o conjunto usado para decidir o que arquivar é `valid_ids`, as
-tarefas que passaram pela validação do Pydantic (decisão 8), não o total
-bruto de issues devolvidas pelo Jira. Uma issue que ainda existe no Jira mas
-foi descartada por um valor fora do enum (`priority`/`tipo` desconhecidos) é
-arquivada como se tivesse sumido, mesmo continuando ativa do lado do Jira.
-Isso é consistente com o resto do pipeline, que já trata registro inválido
-como ausente do relatório, mas vale saber ao investigar por que uma tarefa
-foi arquivada.
+**Trade-off:** Cuidado ao mexer nisso: o conjunto usado para decidir o que arquivar precisa ser all_ids_from_jira (toda issue key devolvida pela busca crua ao Jira, antes de qualquer validação), não valid_ids (as tarefas que já passaram pela validação do Pydantic, decisão 8). Usar valid_ids faria uma issue descartada por validação (priority/tipo fora do enum, por exemplo) ser arquivada como se tivesse desaparecido do Jira, mesmo continuando ativa lá — confundindo "não veio nessa busca" com "veio, mas falhou na validação". Essa foi, de fato, uma versão inicial com esse bug, corrigida antes de entrar em produção.
