@@ -14,9 +14,14 @@ from sop_pipeline.services.employee_sync_service import EmployeeSyncService
 SAVE_DUPLICATES = "sop_pipeline.services.employee_sync_service.ExcelWriter.save_duplicates"
 
 
-def _row(nome: str, jira_email: str, clockify_email: str) -> dict:
+def _row(nome: str, jira_email: str, clockify_email: str, photo_url: str | None = None) -> dict:
     """One employee row as ExcelReader.read_employees would return it."""
-    return {"nome": nome, "jira_email": jira_email, "clockify_email": clockify_email}
+    return {
+        "nome": nome,
+        "jira_email": jira_email,
+        "clockify_email": clockify_email,
+        "photo_url": photo_url,
+    }
 
 
 def _service(rows: list[dict]) -> tuple[EmployeeSyncService, MagicMock]:
@@ -50,6 +55,7 @@ def test_sync_upserts_only_first_of_duplicate_email(colliding_field: str) -> Non
         canonical_name="Alice Silva",
         jira_email=first["jira_email"],
         clockify_email=first["clockify_email"],
+        photo_url=first["photo_url"],
     )
     saved = save_duplicates.call_args.args[1]
     assert [row["nome"] for row in saved] == ["Alice Duplicate"]
