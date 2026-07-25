@@ -1,5 +1,8 @@
 # Architecture
 
+> Also published as a browsable site at
+> https://ndelecrodev.github.io/task-time-sync-docs/
+
 ## Execution flow
 
 An execution (`sop_pipeline.pipeline.run`) is a linear sequence with three isolated synchronization steps.
