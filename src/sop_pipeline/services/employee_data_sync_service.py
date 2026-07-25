@@ -1,9 +1,12 @@
-"""Syncs employee identity from the Excel workbook into Postgres.
+"""Syncs employee identity and area assignments from the Excel workbook into Postgres.
 
 The workbook's ``DIM_FUNCIONARIO`` sheet is the editable source of employee
 identity: whoever maintains the pipeline adds or corrects employees there, and
 this service pushes that sheet into Postgres before each run so the rest of
-the pipeline can resolve names and emails to a stable ``funcionarios.id``.
+the pipeline can resolve names and emails to a stable ``funcionarios.id``. The
+``DIM_FUNCIONARIO_AREA`` and ``FATO_FUNCIONARIO_AREA`` sheets are likewise the
+editable source of which employees belong to which areas, and this service
+pushes those associations into Postgres too.
 """
 
 from sop_pipeline.integrations.excel_reader import ExcelReader
@@ -11,8 +14,8 @@ from sop_pipeline.clients.postgres_client import PostgresClient
 from sop_pipeline.integrations.excel_writer import ExcelWriter
 
 
-class EmployeeSyncService:
-    """Reads employee rows from Excel and upserts them into Postgres."""
+class EmployeeDataSyncService:
+    """Reads employee identity and area rows from Excel and upserts them into Postgres."""
 
     def __init__(self, excel_reader: ExcelReader, postgres_client: PostgresClient) -> None:
         """Store the collaborators used to read and persist employee rows.
@@ -77,3 +80,27 @@ class EmployeeSyncService:
 
         if duplicate_rows:
             ExcelWriter.save_duplicates(file_path, duplicate_rows)
+
+    def sync_areas(self, file_path: str, name_to_id: dict) -> None:
+        """Push the workbook's employee-area assignments into Postgres.
+
+        Args:
+            file_path: Path to the local workbook.
+            name_to_id: Employee canonical name mapped to ``funcionarios.id``.
+        """
+        employee_rows = self.excel_reader.read_employees(file_path)
+        id_to_name = {row["id_funcionario"]: row["nome"] for row in employee_rows}
+
+        area_rows = self.excel_reader.read_dim_employee_area(file_path)
+        area_names_by_id = {row["id_area"]: row["nome_area"] for row in area_rows}
+
+        link_rows = self.excel_reader.read_fato_employee_area(file_path)
+        for link in link_rows:
+            employee_name = id_to_name.get(link["id_funcionario"])
+            area_name = area_names_by_id.get(link["id_area"])
+            employee_id = name_to_id.get(employee_name)
+
+            if employee_id is None or area_name is None:
+                continue
+
+            self.postgres_client.upsert_area_and_link(employee_id=employee_id, area_name=area_name)
