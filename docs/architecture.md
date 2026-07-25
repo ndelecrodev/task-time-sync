@@ -1,5 +1,8 @@
 # Arquitetura
 
+> Também publicado como site navegável em
+> https://ndelecrodev.github.io/task-time-sync-docs/
+
 ## Fluxo de uma execução
 
 Uma execução (`sop_pipeline.pipeline.run`) é uma sequência linear com três etapas
