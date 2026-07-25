@@ -222,6 +222,23 @@ Or activate `poetry shell` and run the commands above without the `poetry run` p
 
 ---
 
+## Continuous Integration
+
+The repository uses two GitHub Actions, defined under `.github/workflows/`:
+
+- **`ci.yaml`** runs on every push and pull request to `main`: lint (`pylint
+  src/`), a formatting check (`black --check src/ tests/`), and the tests
+  (`pytest`, with coverage uploaded to Codecov).
+- **`run-pipeline.yaml`** runs the pipeline itself, every day at 09:50 UTC
+  (06:50 America/Sao_Paulo), and can also be triggered manually from the
+  GitHub Actions tab (`workflow_dispatch`).
+
+The credentials the pipeline uses in production (Jira, Clockify, Postgres, B2,
+Teams, observability) are configured as repository secrets in GitHub Actions,
+not in the runner's `.env`.
+
+---
+
 ## License
 
 MIT — see [LICENSE](../../LICENSE).

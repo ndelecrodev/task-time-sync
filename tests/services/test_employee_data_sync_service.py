@@ -1,4 +1,4 @@
-"""Tests for EmployeeSyncService (scenario #8).
+"""Tests for EmployeeDataSyncService (scenario #8).
 
 Two rows sharing a jira_email or clockify_email must result in only the first
 being upserted; every later row repeating either email is routed to the
@@ -9,9 +9,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from sop_pipeline.services.employee_sync_service import EmployeeSyncService
+from sop_pipeline.services.employee_data_sync_service import EmployeeDataSyncService
 
-SAVE_DUPLICATES = "sop_pipeline.services.employee_sync_service.ExcelWriter.save_duplicates"
+SAVE_DUPLICATES = "sop_pipeline.services.employee_data_sync_service.ExcelWriter.save_duplicates"
 
 
 def _row(nome: str, jira_email: str, clockify_email: str, photo_url: str | None = None) -> dict:
@@ -24,12 +24,12 @@ def _row(nome: str, jira_email: str, clockify_email: str, photo_url: str | None 
     }
 
 
-def _service(rows: list[dict]) -> tuple[EmployeeSyncService, MagicMock]:
+def _service(rows: list[dict]) -> tuple[EmployeeDataSyncService, MagicMock]:
     """Build the service with a reader that returns ``rows`` and a mock DB client."""
     reader = MagicMock()
     reader.read_employees.return_value = rows
     postgres_client = MagicMock()
-    return EmployeeSyncService(reader, postgres_client), postgres_client
+    return EmployeeDataSyncService(reader, postgres_client), postgres_client
 
 
 @pytest.mark.parametrize("colliding_field", ["jira_email", "clockify_email"])

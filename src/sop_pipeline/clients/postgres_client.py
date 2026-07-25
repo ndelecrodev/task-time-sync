@@ -16,6 +16,9 @@ from sqlalchemy import (
     Sequence,
     String,
     select,
+    update,
+    func,
+    DateTime,
 )
 from sqlalchemy.orm import DeclarativeBase, Session
 from sop_pipeline.models.schemas import Task
@@ -72,6 +75,7 @@ class Tarefas(Base):
     tipo = Column(String, nullable=False)
     criador = Column(String, nullable=False)
     data_atualizacao = Column(Date, nullable=False)
+    arquivada_em = Column(DateTime(timezone=True), nullable=True)
 
 
 class DetalhesTarefa(Base):
@@ -119,6 +123,30 @@ class TarefaEtiqueta(Base):
     )
     etiqueta_id = Column(
         Integer, ForeignKey("etiquetas.id", name="fk_tarefa_etiqueta_etiqueta"), primary_key=True
+    )
+
+
+class Area(Base):
+    """An employee area, mirrors the ``areas`` table."""
+
+    __tablename__ = "areas"
+
+    id = Column(Integer, primary_key=True)
+    nome = Column(String, nullable=False, unique=True)
+
+
+class FuncionarioArea(Base):
+    """An employee-area association, mirrors the ``funcionario_area`` table."""
+
+    __tablename__ = "funcionario_area"
+
+    funcionario_id = Column(
+        Integer,
+        ForeignKey("funcionarios.id", name="fk_funcionario_area_funcionario"),
+        primary_key=True,
+    )
+    area_id = Column(
+        Integer, ForeignKey("areas.id", name="fk_funcionario_area_area"), primary_key=True
     )
 
 
@@ -297,4 +325,48 @@ class PostgresClient:
             if link is None:
                 session.add(TarefaEtiqueta(task_id=task_id, etiqueta_id=tag.id))
 
+            session.commit()
+
+    def upsert_area_and_link(self, employee_id: int, area_name: str) -> None:
+        """Insert or update an area and link it to an employee.
+
+        Args:
+            employee_id: FK to ``funcionarios.id``.
+            area_name: The area name to resolve or create.
+        """
+
+        with Session(self.engine) as session:
+            area = session.scalars(select(Area).where(Area.nome == area_name)).first()
+
+            if area is None:
+                area = Area(nome=area_name)
+                session.add(area)
+                session.flush()
+
+            link = session.scalars(
+                select(FuncionarioArea).where(
+                    FuncionarioArea.funcionario_id == employee_id,
+                    FuncionarioArea.area_id == area.id,
+                )
+            ).first()
+
+            if link is None:
+                session.add(FuncionarioArea(funcionario_id=employee_id, area_id=area.id))
+
+            session.commit()
+
+    def archive_missing_tasks(self, seen_task_ids: set[str]) -> None:
+        """Mark as archived every active task not present in the latest sync.
+
+        Args:
+            seen_task_ids: Every task_id returned by this run's Jira fetch.
+        """
+        with Session(self.engine) as session:
+            stmt = (
+                update(Tarefas)
+                .where(Tarefas.arquivada_em.is_(None))
+                .where(Tarefas.task_id.notin_(seen_task_ids))
+                .values(arquivada_em=func.now())
+            )
+            session.execute(stmt)
             session.commit()
