@@ -154,7 +154,7 @@ There is no automatic sync between the two.
 
 Employee mapping used to live in an environment variable (`EMPLOYEES_JSON`),
 a JSON blob read at `Settings` startup. Today `Settings.load_employee_registry`
-reads the `funcionarios` table in Postgres, and `EmployeeSyncService` is what
+reads the `funcionarios` table in Postgres, and `EmployeeDataSyncService` is what
 keeps that table current, syncing it from the workbook's `DIM_FUNCIONARIO`
 tab before every run.
 
@@ -210,6 +210,13 @@ derivable area in Postgres, unlike Excel, where a person's area is
 registered explicitly. If that gap starts to matter, the path is adding a
 `funcionario_area` table in Postgres mirroring `FATO_FUNCIONARIO_AREA`.
 
+**Update:** the `funcionario_area` table was created in Postgres (see
+decision 17), but to sync `FATO_FUNCIONARIO_AREA` through
+`EmployeeDataSyncService.sync_areas`, not to feed the dashboard's
+`person.area` described above. The trade-off's gap ("employee with no tasks
+has no derivable area") still holds as long as the dashboard doesn't query
+that table.
+
 ## 15. The alert shows "Tarefa atrasada há N dia(s)" instead of `days_remaining`'s negative number
 
 `Task.days_remaining` is negative by design for overdue tasks (decision 2).
@@ -226,3 +233,61 @@ step, for text that gets read quickly inside a Teams notification.
 have to move together. Changing one without the other produces a message
 like "Dias restantes: -3 dia(s)" or "Tarefa atrasada há -3 dia(s)", both
 incoherent with the rest of the text.
+
+## 16. `EmployeeSyncService` became `EmployeeDataSyncService`, with a generic `read_sheet_as_dicts` instead of three near-identical reads
+
+Employee sync gained a second responsibility: besides `DIM_FUNCIONARIO`,
+`EmployeeDataSyncService.sync_areas` now also reads `DIM_FUNCIONARIO_AREA`
+and `FATO_FUNCIONARIO_AREA`. To support that, `ExcelReader` gained a generic
+method, `read_sheet_as_dicts(file_path, sheet_name, table_name)`, that opens
+the workbook, finds the table, and builds the list of row dicts.
+`read_employees`, `read_dim_employee_area`, and `read_fato_employee_area` all
+call this helper, each one only fixing the sheet and table name it reads.
+
+**Why:** the three reads did the same sequence of steps (open workbook, find
+table, map columns, iterate rows), varying only the sheet and table. Keeping
+three copies of that logic would create three places to fix the same bug if
+the read format changed. The service's name also changed from
+`EmployeeSyncService` to `EmployeeDataSyncService` because the class stopped
+syncing identity alone; keeping the old name would now be misleading.
+
+**Trade-off:** nothing notable. `read_sheet_as_dicts` covers exactly the same
+contract `read_employees` already had before the extraction; this is a
+method reorganization, not a behavior change.
+
+## 17. Employee-area link uses two Postgres tables (`areas` + `funcionario_area`), not a text column
+
+`upsert_area_and_link` resolves or creates a row in `Area` (table `areas`),
+then resolves or creates the association row in `FuncionarioArea` (table
+`funcionario_area`, composite key `funcionario_id` + `area_id`), instead of
+writing the area name directly into a column on `Funcionarios`.
+
+**Why:** same reasoning as decision 4 for `etiquetas`/`tarefa_etiqueta`: an
+employee can work in more than one area, so the relationship is N:N, not
+N:1. A text column on `funcionarios` would only hold one area per employee
+and would require duplicating the area name on every row, with no dimension
+to group by area later.
+
+## 18. Tasks missing from `JIRA_JQL` are archived by timestamp, not deleted
+
+`PostgresClient.archive_missing_tasks` runs at the end of `sync_jira` and
+sets `tarefas.arquivada_em = now()` on every row whose `task_id` didn't show
+up in the current run's fetch and that wasn't already archived; the row is
+never deleted.
+
+**Why:** follows the same philosophy as decision 8, never discard silently.
+A transient Jira failure or a misconfigured `JIRA_JQL` can make the returned
+issue list come back empty or incomplete; without timestamp archiving, a
+`DELETE` at that point would wipe out tasks that still exist in Jira, and
+the next successful `sync_jira` would have no way to recover what was lost.
+Marking with a timestamp instead of deleting keeps the problem visible and
+reversible.
+
+**Trade-off:** the set used to decide what to archive is `valid_ids`, the
+tasks that passed Pydantic validation (decision 8), not the raw total of
+issues Jira returned. An issue that still exists in Jira but got discarded
+for an out-of-enum value (unknown `priority`/`tipo`) is archived as if it
+had disappeared, even though it is still active on the Jira side. This is
+consistent with the rest of the pipeline, which already treats an invalid
+record as absent from the report, but it's worth knowing when investigating
+why a task got archived.

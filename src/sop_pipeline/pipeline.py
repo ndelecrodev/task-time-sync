@@ -22,7 +22,7 @@ from sop_pipeline.services.alert_service import AlertService
 from sop_pipeline.services.etl_service import EtlService
 from sop_pipeline.integrations.excel_reader import ExcelReader
 from sop_pipeline.clients.postgres_client import PostgresClient
-from sop_pipeline.services.employee_sync_service import EmployeeSyncService
+from sop_pipeline.services.employee_data_sync_service import EmployeeDataSyncService
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +71,14 @@ def sync_jira(etl: EtlService, postgres_client: PostgresClient, name_to_id: dict
         except SQLAlchemyError as error:
             logger.error("Failed to write detail %s to Postgres: %s", detail.task_id, error)
             sentry_sdk.capture_exception(error)
+
+    # Uses every issue key the Jira query returned, not just the ones that
+    # passed validation into `tasks` — a discarded issue (bad enum value,
+    # for example) is still present and active in Jira, so it must not be
+    # archived just because our own parsing rejected it.
+    all_ids_from_jira = {issue["key"] for issue in raw_issues}
+    postgres_client.archive_missing_tasks(all_ids_from_jira)
+
     # A discarded count well above zero means issues are vanishing from the
     # report — usually a Jira priority or issue type missing from the enums.
     logger.info(
@@ -171,13 +179,14 @@ def run() -> None:
         local_destination=settings.TEMP_EXCEL_PATH, cloud_name=settings.EXCEL_CLOUD_NAME
     )
 
-    employee_sync = EmployeeSyncService(ExcelReader(), PostgresClient(engine))
+    postgres_client = PostgresClient(engine)
+    employee_sync = EmployeeDataSyncService(ExcelReader(), postgres_client)
     employee_sync.sync(settings.TEMP_EXCEL_PATH)
 
-    postgres_client = PostgresClient(engine)
     name_to_id = {
         employee.canonical_name: employee.id for employee in postgres_client.get_employees()
     }
+    employee_sync.sync_areas(settings.TEMP_EXCEL_PATH, name_to_id)
 
     etl = EtlService()
 
