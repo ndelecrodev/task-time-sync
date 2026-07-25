@@ -198,9 +198,7 @@ class ExcelWriter:
             for task in tasks:
                 for tag_name in task.tags:
                     tag_id = ExcelWriter._get_or_create_tag_id(worksheet_tags, table_tags, tag_name)
-                    if not link_exists(
-                        worksheet_links, table_links, task.task_id, tag_id
-                    ):
+                    if not link_exists(worksheet_links, table_links, task.task_id, tag_id):
                         ExcelWriter._create_link(worksheet_links, table_links, task.task_id, tag_id)
 
             workbook.save(file_path)

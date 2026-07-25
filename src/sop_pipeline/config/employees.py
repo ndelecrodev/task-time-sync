@@ -19,6 +19,7 @@ class EmployeeMapping(BaseModel):
         jira_email: The email address that appears in Jira assignee records.
         clockify_email: The email address that appears in Clockify time entries.
     """
+
     canonical_name: str = Field(..., description="Normalized name for the report")
     jira_email: EmailStr = Field(..., description="Email in Jira")
     clockify_email: EmailStr = Field(..., description="Email in Clockify")

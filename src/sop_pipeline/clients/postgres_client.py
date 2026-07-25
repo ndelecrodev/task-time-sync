@@ -18,6 +18,7 @@ from sqlalchemy import (
     select,
 )
 from sqlalchemy.orm import DeclarativeBase, Session
+from sop_pipeline.models.schemas import Task
 
 
 class Base(DeclarativeBase):
@@ -142,7 +143,9 @@ class PostgresClient:
             result = session.scalars(select(Funcionarios))
             return result.all()
 
-    def upsert_employee(self, canonical_name: str, jira_email: str, clockify_email: str, photo_url: str | None) -> None:
+    def upsert_employee(
+        self, canonical_name: str, jira_email: str, clockify_email: str, photo_url: str | None
+    ) -> None:
         """Insert or update an employee, matched by either email address.
 
         Args:
@@ -177,71 +180,47 @@ class PostgresClient:
 
             session.commit()
 
-    def upsert_task(
-        self,
-        task_id: str,
-        titulo: str,
-        responsavel_id: int | None,
-        area: str,
-        prioridade: str,
-        status: str,
-        data_criacao,
-        prazo,
-        data_conclusao,
-        tipo: str,
-        criador: str,
-        data_atualizacao,
-    ) -> None:
+    def upsert_task(self, task: Task, responsavel_id: int | None) -> None:
         """Insert or update a task, matched by its Jira issue key.
 
         Args:
-            task_id: Jira issue key; the upsert key.
-            titulo: Issue title.
+            task: The task to persist.
             responsavel_id: FK to ``funcionarios.id``, ``None`` when the
                 assignee could not be mapped to an employee.
-            area: Value of the Jira "area" custom field.
-            prioridade: Issue priority.
-            status: Workflow status name.
-            data_criacao: Date the issue was created.
-            prazo: Due date, when one is set.
-            data_conclusao: Date the issue was resolved, when it was.
-            tipo: Issue type.
-            criador: Display name of whoever opened the issue.
-            data_atualizacao: Date of the last update.
         """
         with Session(self.engine) as session:
-            result = session.scalars(select(Tarefas).where(Tarefas.task_id == task_id)).first()
+            result = session.scalars(select(Tarefas).where(Tarefas.task_id == task.task_id)).first()
 
             if result is None:
                 session.add(
                     Tarefas(
-                        task_id=task_id,
-                        titulo=titulo,
+                        task_id=task.task_id,
+                        titulo=task.title,
                         responsavel_id=responsavel_id,
-                        area=area,
-                        prioridade=prioridade,
-                        status=status,
-                        data_criacao=data_criacao,
-                        prazo=prazo,
-                        data_conclusao=data_conclusao,
-                        tipo=tipo,
-                        criador=criador,
-                        data_atualizacao=data_atualizacao,
+                        area=task.area,
+                        prioridade=task.priority,
+                        status=task.status,
+                        data_criacao=task.creation_date,
+                        prazo=task.due_date,
+                        data_conclusao=task.completion_date,
+                        tipo=task.task_type,
+                        criador=task.creator,
+                        data_atualizacao=task.update_date,
                     )
                 )
             else:
-                result.task_id = task_id
-                result.titulo = titulo
+                result.task_id = task.task_id
+                result.titulo = task.title
                 result.responsavel_id = responsavel_id
-                result.area = area
-                result.prioridade = prioridade
-                result.status = status
-                result.data_criacao = data_criacao
-                result.prazo = prazo
-                result.data_conclusao = data_conclusao
-                result.tipo = tipo
-                result.criador = criador
-                result.data_atualizacao = data_atualizacao
+                result.area = task.area
+                result.prioridade = task.priority
+                result.status = task.status
+                result.data_criacao = task.creation_date
+                result.prazo = task.due_date
+                result.data_conclusao = task.completion_date
+                result.tipo = task.task_type
+                result.criador = task.creator
+                result.data_atualizacao = task.update_date
 
             session.commit()
 
