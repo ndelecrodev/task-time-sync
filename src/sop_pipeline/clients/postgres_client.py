@@ -366,7 +366,7 @@ class PostgresClient:
                 update(Tarefas)
                 .where(Tarefas.arquivada_em.is_(None))
                 .where(Tarefas.task_id.notin_(seen_task_ids))
-                .values(arquivada_em=func.now())
+                .values(arquivada_em=func.now())  # pylint: disable=not-callable
             )
             session.execute(stmt)
             session.commit()
