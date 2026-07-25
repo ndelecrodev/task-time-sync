@@ -1,5 +1,8 @@
 # Modelo de dados
 
+> Também publicado como site navegável em
+> https://ndelecrodev.github.io/task-time-sync-docs/
+
 ## Modelos Python
 
 Definidos em `src/sop_pipeline/models/schemas.py`. São modelos Pydantic: uma

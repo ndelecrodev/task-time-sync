@@ -1,5 +1,8 @@
 # Design decisions
 
+> Also published as a browsable site at
+> https://ndelecrodev.github.io/task-time-sync-docs/
+
 Record of non-obvious choices in the project and the reasoning behind them.
 
 ## 1. Upsert is done by ID, scanning the first column

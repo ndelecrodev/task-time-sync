@@ -6,6 +6,9 @@ A Python pipeline that consolidates **Jira** (tasks) and **Clockify** (logged ho
 
 The spreadsheet is not a dump: it is the final product, with tables, formulas, and indicator tabs. The pipeline performs *upsert* operations on the data tables and leaves the calculated columns to Excel's own formulas. Postgres holds the same data relationally, with the employee registry as the source of truth shared between the spreadsheet and the database.
 
+Full documentation (architecture, data model, design decisions) is available
+at https://ndelecrodev.github.io/task-time-sync-docs/
+
 ---
 
 ## Flow overview

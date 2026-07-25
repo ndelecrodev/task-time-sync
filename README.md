@@ -13,6 +13,9 @@ calculadas para as fórmulas do próprio Excel. O Postgres guarda os mesmos dado
 de forma relacional, com o cadastro de colaboradores como fonte de verdade
 compartilhada entre a planilha e o banco.
 
+Documentação completa (arquitetura, modelo de dados, decisões de design) está
+disponível em https://ndelecrodev.github.io/task-time-sync-docs/
+
 ---
 
 ## Visão geral do fluxo
