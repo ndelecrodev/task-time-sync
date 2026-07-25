@@ -370,3 +370,13 @@ class PostgresClient:
             )
             session.execute(stmt)
             session.commit()
+
+    def get_archived_tasks(self) -> Sequence[Tarefas]:
+        """Fetch every task currently marked as archived.
+
+        Returns:
+            Sequence[Tarefas]: Every row where arquivada_em is not null.
+        """
+        with Session(self.engine) as session:
+            result = session.scalars(select(Tarefas).where(Tarefas.arquivada_em.is_not(None)))
+            return result.all()
