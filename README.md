@@ -1,116 +1,239 @@
-# Spreadsheet Automation Project
+[English version](docs/en/readme.md)
 
-Sistema completo de gestão e análise de performance de equipe utilizando o Excel como dashboard principal, integrado com dados de tarefas (Jira) e controle de horas via automação em Python.
+# Task Time Sync
 
-## Funcionalidades
+Pipeline em Python que consolida **Jira** (tarefas) e **Clockify** (horas
+apontadas) em uma planilha Excel hospedada no **Backblaze B2** e em um schema
+**Postgres** hospedado no **Supabase**, e avisa o time no **Microsoft Teams**
+sobre tarefas com prazo próximo do vencimento.
 
-* Controle de tarefas por colaborador: Acompanhamento detalhado do ciclo de vida de cada atividade atribuída.
-* Monitoramento de horas trabalhadas: Registro e consolidação do tempo alocado pela equipe.
-* Dashboard visual com KPIs: Painel gerencial e dinâmico focado em métricas estratégicas.
-* Cálculo de produtividade automática: Processamento automático de indicadores de eficiência baseados em entregas versus tempo.
-* Identificação de tarefas atrasadas: Alertas visuais e marcas automáticas para atividades fora do prazo.
-* Gestão de prazos e status: Visão holística de cronogramas e gargalos operacionais.
-* Integração com Jira (via Python): Sincronização automatizada da base de dados sem necessidade de exportações manuais.
+A planilha não é um dump: ela é o produto final, com tabelas, fórmulas e abas de
+indicadores. O pipeline faz *upsert* nas tabelas de dados e deixa as colunas
+calculadas para as fórmulas do próprio Excel. O Postgres guarda os mesmos dados
+de forma relacional, com o cadastro de colaboradores como fonte de verdade
+compartilhada entre a planilha e o banco.
 
-## Arquitetura do Projeto
+---
 
-O ecossistema é dividido em uma camada de processamento e extração de dados (Backend) e uma camada de visualização e cálculo analítico (Frontend).
+## Visão geral do fluxo
 
-### Excel (Frontend / Dashboard)
-O arquivo de planilhas é estruturado em tabelas isoladas para garantir a integridade e escalabilidade dos dados:
-* DASHBOARD: Visualização executiva com KPIs centralizados e gráficos dinâmicos.
-* CALCULOS: Motor interno que processa as métricas segmentadas por pessoa.
-* BASE_TAREFAS: Repositório bruto dos dados extraídos do Jira.
-* BASE_HORAS: Controle estruturado do ponto ou horas alocadas.
-* DIM_FUNCIONARIOS: Tabela dimensional com dados cadastrais dos colaboradores.
-* DETALHES_TAREFA: Descrições detalhadas e metadados adicionais das tarefas.
+```
+                         ┌──────────────┐
+                         │ Backblaze B2 │
+                         └──────┬───────┘
+                       download │      ▲ upload
+                                ▼      │
+                     ┌────────────────────────┐
+                     │   .xlsx (cópia local)   │
+                     └──────┬──────────┬───────┘
+                 DIM_FUNCIONARIO       │
+                            ▼          │
+                 ┌────────────────────┐│
+                 │ EmployeeSyncService││
+                 │   (ExcelReader)    ││
+                 └─────────┬──────────┘│
+                           │ upsert_employee
+                           ▼           │
+   ┌──────────┐      ┌───────────────┐│
+   │ Jira API ├─────▶│               ││
+   └──────────┘      │  EtlService   │◀┴── registro de colaboradores
+   ┌──────────┐      │ (valida +     │
+   │ Clockify ├─────▶│  normaliza)   │
+   └──────────┘      └───────┬───────┘
+                             │ Task / TimeEntry / TaskDetail
+                      ┌──────┴───────┐
+                      ▼              ▼
+             ┌─────────────────┐  ┌─────────────────┐
+             │   ExcelWriter   │  │  PostgresClient │
+             │  (.xlsx local)  │  │   (Supabase)    │
+             └────────┬────────┘  └─────────────────┘
+                      │ tasks
+                      ▼
+             ┌─────────────────┐     ┌────────────┐
+             │  AlertService   ├────▶│  Notifier  │
+             │ (regra de prazo)│     │  (Teams)   │
+             └─────────────────┘     └────────────┘
+```
 
-### Python (Backend)
-Scripts responsáveis pela automação do pipeline de dados:
-* Conexão segura e extração de dados via API do Jira.
-* Processamento, limpeza e tratamento de dados em memória.
-* Carga e atualização automática do Excel mapeando as abas de dados correspondentes.
+`EmployeeSyncService` roda antes do restante do pipeline em cada execução: lê a
+aba `DIM_FUNCIONARIO` da planilha (a fonte editável do cadastro) e sincroniza as
+linhas com a tabela `funcionarios` no Postgres. A primeira linha com um dado
+e-mail é sincronizada normalmente; as seguintes que repetem o mesmo e-mail são
+desviadas para a aba `DUPLICADOS_REMOVIDOS` em vez de sobrescrever o cadastro
+existente. A tabela `funcionarios` também guarda `photo_url`, a foto do
+colaborador consumida pelo dashboard de indicadores. Só depois da
+sincronização `EtlService` carrega o registro já sincronizado para normalizar
+responsáveis do Jira e colaboradores do Clockify para um nome canônico comum.
 
-## Fluxo de Dados
+Detalhes em [`docs/architecture.md`](docs/architecture.md),
+[`docs/data-model.md`](docs/data-model.md) e
+[`docs/design-decisions.md`](docs/design-decisions.md).
 
-O ciclo de vida do dado percorre o seguinte fluxo linear de transformação:
+---
 
-Jira (Origem) -> Python (Ingestão/Tratamento) -> Excel Base (Carga) -> Dashboard (Visualização/KPIs)
+## Arquitetura de pastas
 
-## Principais Métricas
+| Caminho | Responsabilidade |
+|---|---|
+| `main.py` | Entrypoint fino; só chama `sop_pipeline.pipeline.run()`. |
+| `src/sop_pipeline/pipeline.py` | Orquestra a execução: download → sync de colaboradores → sync Jira/Clockify → upload → alertas. |
+| `src/sop_pipeline/clients/` | Clientes das fontes externas: `JiraClient` e `ClockifyClient` (HTTP, sem regra de negócio) e `PostgresClient` (upserts no schema Supabase). |
+| `src/sop_pipeline/services/` | Regra de negócio: `EtlService` (transformação/validação), `AlertService` (quem merece alerta) e `EmployeeSyncService` (sincroniza `DIM_FUNCIONARIO` com o Postgres). |
+| `src/sop_pipeline/integrations/` | Leitura e escrita da planilha e de sistemas externos: `ExcelReader`, `ExcelWriter`, `excel_workbook.py`/`excel_table_helpers.py` (helpers de abertura e de tabela), `Notifier` (Teams), `StorageClient` (B2). |
+| `src/sop_pipeline/models/` | Modelos Pydantic (`Task`, `TimeEntry`, `TaskDetail`) e enums. |
+| `src/sop_pipeline/config/` | `Settings` (variáveis de ambiente e engine do Postgres) e `EmployeeRegistry`/`EmployeeMapping` (identidade de colaboradores). |
+| `src/sop_pipeline/errors/` | Exceções de negócio do projeto. |
+| `tests/` | Espelha a estrutura de `src/sop_pipeline/`. |
+| `docs/` | Documentação de arquitetura, modelo de dados e decisões de design. |
 
-O sistema consolida e apresenta em tempo real os seguintes indicadores:
-* Tarefas totais: Volumetria geral do backlog e sprint.
-* Tarefas concluídas: Volume de entregas finalizadas com sucesso.
-* Tarefas atrasadas: Quantidade de itens com prazo expirado em relação à data atual.
-* Horas trabalhadas: Total de esforço temporal registrado pela equipe.
-* Produtividade: Métrica calculada através da relação de tarefas concluídas por hora.
-* Percentual de conclusão: Progresso percentual do projeto (concluídas / total).
+---
 
-## Estrutura de Dados
+## Instalação
 
-### BASE_TAREFAS
-| Campo | Descrição |
-| :--- | :--- |
-| id | Identificador único da tarefa (Key do Jira). |
-| titulo | Nome ou resumo descritivo da tarefa. |
-| responsavel | Nome do colaborador alocado. |
-| area | Departamento ou squad correspondente. |
-| prioridade | Nível de criticidade (Highest a Lowest). |
-| status | Status atual do fluxo de trabalho (ex: To Do, In Progress, Done). |
-| data_inicio | Data de início da atividade. |
-| prazo | Data limite para a entrega (Deadline). |
-| data_conclusao | Data em que a tarefa foi movida para o status concluído. |
-| dias_restantes | Cálculo de dias disponíveis até o prazo final. |
-| atrasado | Marca booleana ou binária indicando atraso (Sim/Não ou 1/0). |
-| status_prazo | Classificação textual do status do prazo (ex: No Prazo, Atenção, Atrasado). |
+Requer **Python 3.11+** e [Poetry](https://python-poetry.org/).
 
-### BASE_HORAS
-| Campo | Descrição |
-| :--- | :--- |
-| funcionario | Nome do colaborador. |
-| data | Data do registro do esforço. |
-| horas | Quantidade de horas trabalhadas ou alocadas no dia. |
+Existem dois cenários de instalação, com comandos diferentes:
 
-## Níveis de Prioridade (Jira Mapping)
+- **Só rodar o pipeline** (uso em produção/CI de execução): instala apenas as
+  dependências de runtime.
 
-* Highest: Crítica
-* High: Alta
-* Medium: Média
-* Low: Baixa
-* Lowest: Muito Baixa
+  ```bash
+  poetry install
+  ```
 
-## Lógica de Negócio
+- **Desenvolver/testar** (rodar `pytest`, `pylint`, `black` localmente): instala
+  as dependências de runtime **e** as de desenvolvimento, via o extra `dev`.
 
-As seguintes premissas e regras analíticas regem os cálculos automatizados:
-1. Tarefa Concluída: Identificada estritamente quando o campo data_conclusao está devidamente preenchido.
-2. Identificação de Atraso: Uma tarefa é marcada como atrasada se prazo for menor que hoje e a atividade ainda não estiver concluída.
-3. Métrica de Produtividade: Calculada pela divisão de Tarefas Concluídas por Horas Trabalhadas.
-4. Percentual de Conclusão: Mensurado através da divisão de Tarefas Concluídas pelo Total de Tarefas.
+  ```bash
+  poetry install --extras dev
+  ```
 
-## Boas Práticas Adotadas
+Em ambos os casos, o Poetry cria o ambiente virtual (fora da pasta do projeto)
+e instala o próprio pacote em modo editável — não há mais nenhum passo manual
+de `venv` ou `pip install -e .`.
 
-* Separação entre Dados e Visualização: As abas de dados (BASE_*) servem apenas como repositórios limpos, enquanto a aba DASHBOARD é isolada para consumo visual.
-* Tabelas Estruturadas: Utilização do recurso Formatar como Tabela do Excel, garantindo referências estruturadas dinâmicas e fórmulas que se expandem sozinhas.
-* Não Duplicação de Dados: Estrutura normalizada utilizando tabelas dimensionais (DIM_FUNCIONARIOS) conectadas por chaves.
-* Cálculos no Excel: O Python é responsável apenas pela extração e transporte dos dados brutos. Os cálculos e fórmulas lógicas rodam nativamente no Excel para manter a flexibilidade do usuário.
-* Backend desacoplado: Toda a regra de conexão e autenticação com o ecossistema Jira fica centralizada nos scripts Python de forma segura.
+---
 
-## Tecnologias Utilizadas
+## Configuração
 
-* Python: Linguagem core utilizada para a construção do script de backend e automação do pipeline.
-* Excel: Interface visual e motor de cálculo dinâmico (fórmulas e tabelas dinâmicas).
-* Pandas: Biblioteca Python para manipulação, limpeza e estruturação eficiente das matrizes de dados.
-* OpenPyXL: Engine de integração utilizada pelo Python para ler, gravar e modificar planilhas Excel sem a necessidade de abrir a interface do software.
-* API do Jira: Endpoint oficial utilizado para realizar as consultas (JQL) e extrair o status das tarefas em tempo real.
+Copie o arquivo de exemplo e preencha os valores:
 
-## Próximos Passos
+```bash
+cp .env.example .env    # Windows: copy .env.example .env
+```
 
-- Implementação de logs e tratamento de exceções robusto na conexão com a API do Jira.
-- Agendamento da automação via nuvem (ex: GitHub Actions, Airflow ou AWS Lambda) para atualização programada.
-- Migração incremental ou espelhamento do dashboard para o Power BI buscando maior interatividade.
-- Criação de um sistema de alertas automáticos (via e-mail ou Slack ou Teams) para notificar os colaboradores sobre tarefas próximas ao prazo de expiração.
+O `.env` **nunca** é versionado (está no `.gitignore`). Todo segredo do projeto
+— token do Jira, chave do Clockify, webhooks do Teams, credenciais do B2 — vem de
+lá; nada fica escrito no código.
 
-## Autor
+As variáveis estão agrupadas por serviço dentro do `.env.example`, cada uma com um
+comentário explicando onde obter o valor. Resumo:
 
-Projeto desenvolvido com foco em excelência operacional, automação corporativa e análise de dados focada na gestão de performance de equipes de alta performance.
+| Grupo | Variáveis |
+|---|---|
+| Jira | `JIRA_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`, `JIRA_JQL`, `JIRA_CUSTOMFIELD_AREA` |
+| Clockify | `API_KEY_CLOCKIFY`, `WORKSPACE_ID`, `WORKSPACE_NAME` |
+| Postgres / Supabase | `DATABASE_URL` |
+| Regras de alerta | `ALERT_DAYS_LOW`, `ALERT_DAYS_MEDIUM`, `ALERT_DAYS_HIGH`, `HIGH_PRIORITIES`, `LOW_PRIORITIES` |
+| Teams | `WEBHOOK_TI`, `WEBHOOK_SOP`, `WEBHOOK_IA`, `WEBHOOK_FRONT`, `WEBHOOK_DESIGN`, `WEBHOOK_DATA`, `WEBHOOK_BACK`, `WEBHOOK_NO_AREA` |
+| Backblaze B2 | `B2_ENDPOINT_URL`, `B2_BUCKET_NAME`, `B2_APPLICATION_KEY`, `B2_KEY_ID`, `EXCEL_CLOUD_NAME`, `TEMP_EXCEL_PATH` |
+| Observabilidade | `SENTRY_DSN`, `BETTERSTACK_HEARTBEAT_URL`, `BETTERSTACK_SOURCE_TOKEN`, `BETTERSTACK_INGESTING_HOST` |
+
+### Obtendo o WORKSPACE_ID do Clockify
+
+O `WORKSPACE_ID` não aparece em nenhum lugar da interface do Clockify — ele só
+existe na resposta da API. Não há atualmente nenhum script auxiliar no
+repositório para buscar esse valor, então o jeito mais direto é uma chamada à
+API usando a mesma chave já configurada em `API_KEY_CLOCKIFY`:
+
+```bash
+curl -H "X-Api-Key: SUA_CHAVE_AQUI" https://api.clockify.me/api/v1/workspaces
+```
+
+A resposta é uma lista JSON com todos os workspaces aos quais sua conta tem
+acesso. Localize o objeto cujo campo `name` corresponde ao nome do seu
+workspace e copie o valor do campo `id` — esse é o `WORKSPACE_ID` a ser usado
+no `.env`.
+
+### A conexão com o Postgres (`DATABASE_URL`)
+
+`DATABASE_URL` usa o formato `postgresql+psycopg://usuario:senha@host:porta/banco`
+e deve apontar para o **transaction pooler** do Supabase (porta `6543`), não para
+a conexão direta: o pooler suporta IPv4, enquanto a conexão direta do Supabase só
+responde em IPv6, o que quebra em redes e provedores sem suporte a IPv6.
+
+### A consulta JQL (`JIRA_JQL`)
+
+A variável `JIRA_JQL` define **quais issues o pipeline busca no Jira**. É uma
+consulta JQL comum, no mesmo formato usado na busca avançada do Jira:
+
+```
+JIRA_JQL="project = SEUPROJETO ORDER BY created DESC"
+```
+
+O `JiraClient` envia essa string para o endpoint de busca e pagina o resultado até
+o fim, então qualquer filtro válido de JQL funciona — por status, por responsável,
+por data de atualização, etc.
+
+O **valor real fica apenas no `.env` local** e não é publicado neste repositório,
+porque a query contém o identificador do projeto Jira, que não deve ser público. O
+`.env.example` traz apenas o formato genérico acima.
+
+---
+
+## Como rodar
+
+Com o `.env` preenchido:
+
+```bash
+poetry run python main.py
+```
+
+Ou, via o script instalado pelo pacote:
+
+```bash
+poetry run sop-pipeline
+```
+
+Se preferir não prefixar cada comando com `poetry run`, use `poetry shell`
+para ativar uma sessão interativa dentro do ambiente e rode os comandos
+normalmente.
+
+Uma execução completa:
+
+1. baixa a planilha do bucket B2 para o caminho de `TEMP_EXCEL_PATH`;
+2. sincroniza `DIM_FUNCIONARIO` com a tabela `funcionarios` no Postgres;
+3. busca as issues do Jira e grava tarefas, etiquetas e descrições na planilha e no Postgres;
+4. busca as horas de todos os usuários do Clockify e grava os apontamentos na planilha e no Postgres;
+5. sobe a planilha atualizada de volta para o bucket;
+6. envia os alertas de prazo para os canais do Teams;
+7. dispara o heartbeat do Better Stack, confirmando que a execução terminou.
+
+As etapas 3, 4 e 6 são isoladas entre si: se o Jira estiver fora do ar, as horas do
+Clockify ainda são coletadas. Falhas são logadas e enviadas ao Sentry.
+
+> A execução mexe em dados reais (bucket, planilha e canais do Teams). Para testar
+> mudanças sem efeito colateral, trabalhe sobre uma cópia local da planilha.
+
+---
+
+## Desenvolvimento
+
+As dependências de desenvolvimento precisam do extra `dev` (veja
+[Instalação](#instalação)): `poetry install --extras dev`.
+
+```bash
+poetry run black src main.py tests      # formatação
+poetry run pylint src main.py tests     # lint
+poetry run pytest                       # testes
+```
+
+Ou ative `poetry shell` e rode os comandos acima sem o prefixo `poetry run`.
+
+`black` e `pylint` são configurados no `pyproject.toml` (linha de 100 colunas).
+
+---
+
+## Licença
+
+MIT — veja [LICENSE](LICENSE).

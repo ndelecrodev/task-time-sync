@@ -1,0 +1,65 @@
+[build-system]
+requires = ["poetry-core>=1.9"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+packages = [{ include = "sop_pipeline", from = "src" }]
+
+[project]
+name = "sop-pipeline"
+version = "0.1.0"
+description = "Syncs Jira and Clockify into an Excel report and alerts Microsoft Teams."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+dependencies = [
+    "requests",
+    "openpyxl",
+    "pydantic[email]",
+    "pydantic-settings",
+    "python-dotenv",
+    "isodate",
+    "boto3",
+    "sentry-sdk",
+    "logtail-python",
+    "sqlalchemy",
+    "psycopg[binary]",
+    "tzdata ; sys_platform == 'win32'",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pylint", "black", "pytest-cov"]
+
+[project.scripts]
+sop-pipeline = "sop_pipeline.pipeline:run"
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.pylint.main]
+# The package lives under src/, so pylint needs it on the path to resolve imports.
+init-hook = "import sys; sys.path.insert(0, 'src')"
+
+[tool.pylint.format]
+max-line-length = 100
+
+[tool.pylint.design]
+# upsert_task mirrors the tarefas table's columns one-to-one; the count
+# is deliberate, not a sign of the method doing too much. Revisit if
+# this ever grows further, or if the method migrates to accept a Task
+# object instead (see backlog).
+max-args = 12
+max-positional-arguments = 12
+max-locals = 20
+
+[tool.pylint."messages control"]
+disable = [
+    # openpyxl worksheet/table objects have no useful type to annotate against,
+    # so the helper signatures are intentionally untyped for those parameters.
+    "too-few-public-methods",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
