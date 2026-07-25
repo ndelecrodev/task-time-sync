@@ -1,0 +1,53 @@
+name: Run pipeline
+
+on:
+  schedule:
+    - cron: "0 10 * * *"
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Copy files from the repo
+        uses: actions/checkout@v7
+
+      - name: Python Install
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Poetry Install in the machine
+        run: pip install poetry
+
+      - name: Install dependencies
+        run: poetry install
+
+      - name: Run pipeline
+        env:
+          JIRA_URL: ${{ secrets.JIRA_URL }}
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          API_KEY_CLOCKIFY: ${{ secrets.API_KEY_CLOCKIFY }}
+          WORKSPACE_ID: ${{ secrets.WORKSPACE_ID }}
+          JIRA_CUSTOMFIELD_AREA: ${{ secrets.JIRA_CUSTOMFIELD_AREA }}
+          WEBHOOK_TI: ${{ secrets.WEBHOOK_TI }}
+          WEBHOOK_SOP: ${{ secrets.WEBHOOK_SOP }}
+          WEBHOOK_IA: ${{ secrets.WEBHOOK_IA }}
+          WEBHOOK_FRONT: ${{ secrets.WEBHOOK_FRONT }}
+          WEBHOOK_DESIGN: ${{ secrets.WEBHOOK_DESIGN }}
+          WEBHOOK_DATA: ${{ secrets.WEBHOOK_DATA }}
+          WEBHOOK_BACK: ${{ secrets.WEBHOOK_BACK }}
+          WEBHOOK_NO_AREA: ${{ secrets.WEBHOOK_NO_AREA }}
+          B2_ENDPOINT_URL: ${{ secrets.B2_ENDPOINT_URL }}
+          B2_BUCKET_NAME: ${{ secrets.B2_BUCKET_NAME }}
+          B2_APPLICATION_KEY: ${{ secrets.B2_APPLICATION_KEY }}
+          B2_KEY_ID: ${{ secrets.B2_KEY_ID }}
+          JIRA_JQL: ${{ secrets.JIRA_JQL }}
+          EXCEL_CLOUD_NAME: ${{ secrets.EXCEL_CLOUD_NAME }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          BETTERSTACK_HEARTBEAT_URL: ${{ secrets.BETTERSTACK_HEARTBEAT_URL }}
+          BETTERSTACK_SOURCE_TOKEN: ${{ secrets.BETTERSTACK_SOURCE_TOKEN }}
+          BETTERSTACK_INGESTING_HOST: ${{ secrets.BETTERSTACK_INGESTING_HOST }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: poetry run sop-pipeline

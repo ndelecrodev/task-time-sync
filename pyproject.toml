@@ -28,7 +28,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "pylint", "black"]
+dev = ["pytest", "pylint", "black", "pytest-cov"]
 
 [project.scripts]
 sop-pipeline = "sop_pipeline.pipeline:run"
