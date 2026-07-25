@@ -58,12 +58,15 @@ def test_upsert_employee_inserts_when_absent() -> None:
     """No matching row -> a new Funcionarios is added and committed."""
     with patched_session() as session:
         session.scalars.return_value = _scalar_result(None)
-        _client().upsert_employee("Alice Silva", "alice.jira@example.com", "alice.ck@example.com")
+        _client().upsert_employee(
+            "Alice Silva", "alice.jira@example.com", "alice.ck@example.com", "https://storage.example.com/alice.jpg"
+        )
 
     added = session.add.call_args.args[0]
     assert isinstance(added, Funcionarios)
     assert added.canonical_name == "Alice Silva"
     assert added.jira_email == "alice.jira@example.com"
+    assert added.photo_url == "https://storage.example.com/alice.jpg"
     session.commit.assert_called_once()
 
 
@@ -73,13 +76,17 @@ def test_upsert_employee_updates_existing_without_inserting() -> None:
         canonical_name="Old Name",
         jira_email="old.jira@example.com",
         clockify_email="old.ck@example.com",
+        photo_url="https://storage.example.com/old.jpg",
     )
     with patched_session() as session:
         session.scalars.return_value = _scalar_result(existing)
-        _client().upsert_employee("New Name", "new.jira@example.com", "new.ck@example.com")
+        _client().upsert_employee(
+            "New Name", "new.jira@example.com", "new.ck@example.com", "https://storage.example.com/new.jpg"
+        )
 
     assert existing.canonical_name == "New Name"
     assert existing.jira_email == "new.jira@example.com"
+    assert existing.photo_url == "https://storage.example.com/new.jpg"
     session.add.assert_not_called()
     session.commit.assert_called_once()
 

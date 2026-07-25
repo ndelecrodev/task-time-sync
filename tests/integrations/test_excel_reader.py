@@ -15,6 +15,7 @@ def test_read_employees_maps_columns_to_headers(employees_workbook_path: str) ->
         "nome": "Alice Silva",
         "jira_email": "alice.jira@example.com",
         "clockify_email": "alice.clockify@example.com",
+        "photo_url": "https://storage.example.com/alice.jpg",
     }
 
 
@@ -31,3 +32,4 @@ def test_read_employees_keeps_blank_cell_as_none(employees_workbook_path: str) -
 
     assert rows[1]["jira_email"] is None
     assert rows[1]["clockify_email"] == "bob.clockify@example.com"
+    assert rows[1]["photo_url"] is None

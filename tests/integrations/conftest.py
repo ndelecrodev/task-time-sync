@@ -96,14 +96,15 @@ def employees_workbook_path(tmp_path) -> str:
     workbook = openpyxl.Workbook()
     worksheet = workbook.active
     worksheet.title = "DIM_FUNCIONARIO"
-    headers = ["nome", "jira_email", "clockify_email"]
+    headers = ["nome", "jira_email", "clockify_email", "photo_url"]
     _write_headers(worksheet, headers)
 
     worksheet.cell(row=2, column=1, value="Alice Silva")
     worksheet.cell(row=2, column=2, value="alice.jira@example.com")
     worksheet.cell(row=2, column=3, value="alice.clockify@example.com")
+    worksheet.cell(row=2, column=4, value="https://storage.example.com/alice.jpg")
 
-    # Bob's jira_email cell is intentionally left blank.
+    # Bob's jira_email and photo_url cells are intentionally left blank.
     worksheet.cell(row=3, column=1, value="Bob Souza")
     worksheet.cell(row=3, column=3, value="bob.clockify@example.com")
 
