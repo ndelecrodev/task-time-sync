@@ -1,5 +1,8 @@
 # Decisões de design
 
+> Também publicado como site navegável em
+> https://ndelecrodev.github.io/task-time-sync-docs/
+
 Registro das escolhas não óbvias do projeto e do porquê delas.
 
 ## 1. O upsert é feito por ID, varrendo a primeira coluna

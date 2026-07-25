@@ -1,5 +1,8 @@
 # Data model
 
+> Also published as a browsable site at
+> https://ndelecrodev.github.io/task-time-sync-docs/
+
 ## Python models
 
 Defined in `src/sop_pipeline/models/schemas.py`. They are Pydantic models: a Jira
