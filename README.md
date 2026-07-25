@@ -237,6 +237,23 @@ Ou ative `poetry shell` e rode os comandos acima sem o prefixo `poetry run`.
 
 ---
 
+## Integração contínua
+
+O repositório usa duas GitHub Actions, definidas em `.github/workflows/`:
+
+- **`ci.yaml`** roda em todo push e pull request para `main`: lint (`pylint src/`),
+  checagem de formatação (`black --check src/ tests/`) e os testes (`pytest`, com
+  cobertura enviada ao Codecov).
+- **`run-pipeline.yaml`** roda o pipeline em si, todo dia às 09:50 UTC (06:50
+  horário de Brasília), além de poder ser disparado manualmente pela aba Actions
+  do GitHub (`workflow_dispatch`).
+
+As credenciais que o pipeline usa em produção (Jira, Clockify, Postgres, B2,
+Teams, observabilidade) estão configuradas como *secrets* do repositório no
+GitHub Actions, não no `.env` do runner.
+
+---
+
 ## Licença
 
 MIT — veja [LICENSE](LICENSE).

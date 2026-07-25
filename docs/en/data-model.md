@@ -15,14 +15,14 @@ Since Jira identifies people by display name and Clockify by email, a mapping
 layer normalizes both to a canonical name used as the join key.
 
 **Editable source:** the workbook's `DIM_FUNCIONARIO` tab is where someone
-corrects or adds employees by hand. Before each run, `EmployeeSyncService`
+corrects or adds employees by hand. Before each run, `EmployeeDataSyncService`
 reads that tab with `ExcelReader` and writes the rows into Postgres'
 `funcionarios` table via `PostgresClient.upsert_employee`, matched by either
 `jira_email` or `clockify_email`.
 
 **Duplicates:** the first row to use a given `jira_email` or `clockify_email`
 is synced normally; any later row that repeats either one is treated as a
-duplicate (`EmployeeSyncService._split_duplicates`), gets a reason attached,
+duplicate (`EmployeeDataSyncService._split_duplicates`), gets a reason attached,
 and is written to the `DUPLICADOS_REMOVIDOS` tab instead of being synced.
 
 **Runtime use:** `Settings.load_employee_registry` reads the already-synced
@@ -32,7 +32,7 @@ to the canonical name.
 
 **Employee photo:** `funcionarios.photo_url` holds the public Supabase Storage
 URL of the employee's photo, or `None` when no photo has been uploaded yet.
-`EmployeeSyncService` forwards the value read from `DIM_FUNCIONARIO` on every
+`EmployeeDataSyncService` forwards the value read from `DIM_FUNCIONARIO` on every
 sync; this is the field the reporting dashboard (a separate repository)
 consumes to show each person's photo.
 
@@ -194,8 +194,10 @@ the corresponding `.xlsx` tab.
 | Table | Role | Upserted by |
 |---|---|---|
 | `funcionarios` | Employee identity, synced from `DIM_FUNCIONARIO`. Includes `photo_url`, the photo URL consumed by the dashboard. | `upsert_employee` |
-| `tarefas` | One row per Jira issue; `responsavel_id` is `NULL` when the employee could not be mapped. | `upsert_task` |
+| `tarefas` | One row per Jira issue; `responsavel_id` is `NULL` when the employee could not be mapped. `arquivada_em` holds the timestamp when the task stopped appearing in `JIRA_JQL` (`NULL` while active); the row is never deleted. | `upsert_task` (archiving: `archive_missing_tasks`) |
 | `detalhes_tarefa` | Long-form task description. | `upsert_task_detail` |
 | `horas` | One Clockify time entry; `funcionario_id` is `NULL` when the employee could not be mapped. | `upsert_time_entry` |
 | `etiquetas` | Distinct tags assigned to tasks. | `upsert_tag_and_link` |
 | `tarefa_etiqueta` | N:N association between `tarefas` and `etiquetas`. | `upsert_tag_and_link` |
+| `areas` | Employee work areas, synced from `DIM_FUNCIONARIO_AREA`. | `upsert_area_and_link` |
+| `funcionario_area` | N:N association between `funcionarios` and `areas`, synced from `FATO_FUNCIONARIO_AREA`; composite key `funcionario_id` + `area_id`, both FKs. | `upsert_area_and_link` |
