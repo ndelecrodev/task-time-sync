@@ -51,7 +51,7 @@ def test_sync_jira_one_failing_upsert_does_not_stop_the_rest(etl_service, make_j
     postgres_client = MagicMock()
 
     def fail_on_abc2(**kwargs) -> None:
-        if kwargs["task_id"] == "ABC-2":
+        if kwargs["task"].task_id == "ABC-2":
             raise SQLAlchemyError("boom")
 
     postgres_client.upsert_task.side_effect = fail_on_abc2
@@ -65,7 +65,7 @@ def test_sync_jira_one_failing_upsert_does_not_stop_the_rest(etl_service, make_j
 
     # All three tasks were attempted despite ABC-2 raising, and the workbook write
     # (which happens before the upsert loop) still occurred.
-    attempted = [call.kwargs["task_id"] for call in postgres_client.upsert_task.call_args_list]
+    attempted = [call.kwargs["task"].task_id for call in postgres_client.upsert_task.call_args_list]
     assert attempted == ["ABC-1", "ABC-2", "ABC-3"]
     excel.save_tasks.assert_called_once()
 

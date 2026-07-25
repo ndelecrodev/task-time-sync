@@ -20,7 +20,7 @@ class ExcelReader:
         """
         workbook = open_workbook(file_path)
         worksheet = workbook["DIM_FUNCIONARIO"]
-        table = worksheet.tables['dim_funcionario']
+        table = worksheet.tables["dim_funcionario"]
 
         column_map = create_column_map(worksheet=worksheet, table=table)
 

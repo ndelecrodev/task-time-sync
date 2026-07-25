@@ -53,11 +53,11 @@ class Notifier:
             deadline_text = "Sem prazo definido"
 
         if task.days_remaining is not None:
-            
+
             if task.days_remaining < 0:
                 days_label = "Tarefa atrasada há"
                 days_text = f"{abs(task.days_remaining)} dia(s)"
-            else:  
+            else:
                 days_label = "Dias restantes"
                 days_text = f"{task.days_remaining} dia(s)"
         else:

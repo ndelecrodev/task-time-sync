@@ -22,6 +22,7 @@ from sop_pipeline.clients.postgres_client import (
     Tarefas,
     PostgresClient,
 )
+from sop_pipeline.models.schemas import Priority, Task, TaskType
 
 
 def _scalar_result(first_value):
@@ -59,7 +60,10 @@ def test_upsert_employee_inserts_when_absent() -> None:
     with patched_session() as session:
         session.scalars.return_value = _scalar_result(None)
         _client().upsert_employee(
-            "Alice Silva", "alice.jira@example.com", "alice.ck@example.com", "https://storage.example.com/alice.jpg"
+            "Alice Silva",
+            "alice.jira@example.com",
+            "alice.ck@example.com",
+            "https://storage.example.com/alice.jpg",
         )
 
     added = session.add.call_args.args[0]
@@ -81,7 +85,10 @@ def test_upsert_employee_updates_existing_without_inserting() -> None:
     with patched_session() as session:
         session.scalars.return_value = _scalar_result(existing)
         _client().upsert_employee(
-            "New Name", "new.jira@example.com", "new.ck@example.com", "https://storage.example.com/new.jpg"
+            "New Name",
+            "new.jira@example.com",
+            "new.ck@example.com",
+            "https://storage.example.com/new.jpg",
         )
 
     assert existing.canonical_name == "New Name"
@@ -94,45 +101,62 @@ def test_upsert_employee_updates_existing_without_inserting() -> None:
 # --- upsert_task -----------------------------------------------------------------
 
 
-def _task_args(task_id: str = "ABC-1", titulo: str = "Title") -> dict:
-    """Keyword arguments for a full upsert_task call."""
-    return {
-        "task_id": task_id,
-        "titulo": titulo,
-        "responsavel_id": 7,
-        "area": "TI",
-        "prioridade": "High",
-        "status": "In Progress",
-        "data_criacao": date(2026, 1, 1),
-        "prazo": date(2026, 2, 1),
-        "data_conclusao": None,
-        "tipo": "Task",
-        "criador": "Carol Lima",
-        "data_atualizacao": date(2026, 1, 5),
-    }
+def _task(task_id: str = "ABC-1", title: str = "Title") -> Task:
+    """A fully populated Task for upsert_task tests."""
+    return Task(
+        task_id=task_id,
+        title=title,
+        assignee="Carol Lima",
+        priority=Priority.HIGH,
+        status="In Progress",
+        area="TI",
+        creation_date=date(2026, 1, 1),
+        due_date=date(2026, 2, 1),
+        completion_date=None,
+        task_type=TaskType.TASK,
+        creator="Carol Lima",
+        update_date=date(2026, 1, 5),
+    )
 
 
 def test_upsert_task_inserts_when_absent() -> None:
     """No matching task -> a new Tarefas row is added."""
     with patched_session() as session:
         session.scalars.return_value = _scalar_result(None)
-        _client().upsert_task(**_task_args())
+        _client().upsert_task(task=_task(), responsavel_id=7)
 
     added = session.add.call_args.args[0]
     assert isinstance(added, Tarefas)
     assert added.task_id == "ABC-1"
     assert added.titulo == "Title"
+    assert added.responsavel_id == 7
+    assert added.prioridade == Priority.HIGH
     session.commit.assert_called_once()
 
 
 def test_upsert_task_updates_existing_without_inserting() -> None:
     """A matching task is updated in place; nothing new is added (scenario #7)."""
-    existing = SimpleNamespace(**_task_args(task_id="ABC-1", titulo="Old Title"))
+    existing = SimpleNamespace(
+        task_id="ABC-1",
+        titulo="Old Title",
+        responsavel_id=1,
+        area="TI",
+        prioridade=Priority.LOW,
+        status="Old Status",
+        data_criacao=date(2026, 1, 1),
+        prazo=date(2026, 2, 1),
+        data_conclusao=None,
+        tipo="Task",
+        criador="Carol Lima",
+        data_atualizacao=date(2026, 1, 5),
+    )
     with patched_session() as session:
         session.scalars.return_value = _scalar_result(existing)
-        _client().upsert_task(**_task_args(task_id="ABC-1", titulo="New Title"))
+        _client().upsert_task(task=_task(task_id="ABC-1", title="New Title"), responsavel_id=7)
 
     assert existing.titulo == "New Title"
+    assert existing.responsavel_id == 7
+    assert existing.prioridade == Priority.HIGH
     session.add.assert_not_called()
     session.commit.assert_called_once()
 

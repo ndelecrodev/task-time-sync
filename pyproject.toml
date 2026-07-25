@@ -45,7 +45,12 @@ init-hook = "import sys; sys.path.insert(0, 'src')"
 max-line-length = 100
 
 [tool.pylint.design]
-max-args = 8
+# upsert_task mirrors the tarefas table's columns one-to-one; the count
+# is deliberate, not a sign of the method doing too much. Revisit if
+# this ever grows further, or if the method migrates to accept a Task
+# object instead (see backlog).
+max-args = 12
+max-positional-arguments = 12
 max-locals = 20
 
 [tool.pylint."messages control"]

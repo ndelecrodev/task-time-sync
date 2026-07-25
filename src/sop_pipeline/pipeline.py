@@ -51,32 +51,19 @@ def sync_jira(etl: EtlService, postgres_client: PostgresClient, name_to_id: dict
     # detalhes_tarefa rejects the insert.
     valid_ids = {task.task_id for task in tasks}
     details = [d for d in details if d.task_id in valid_ids]
-    
+
     ExcelWriter.save_tasks(file_path=settings.TEMP_EXCEL_PATH, tasks=tasks)
     ExcelWriter.save_tags(settings.TEMP_EXCEL_PATH, tasks)
     ExcelWriter.save_details(settings.TEMP_EXCEL_PATH, details)
 
     for task in tasks:
         try:
-            postgres_client.upsert_task(
-                task_id=task.task_id,
-                titulo=task.title,
-                responsavel_id=name_to_id.get(task.assignee),
-                area=task.area,
-                prioridade=task.priority,
-                status=task.status,
-                data_criacao=task.creation_date,
-                prazo=task.due_date,
-                data_conclusao=task.completion_date,
-                tipo=task.task_type,
-                criador=task.creator,
-                data_atualizacao=task.update_date,
-            )
+            postgres_client.upsert_task(task=task, responsavel_id=name_to_id.get(task.assignee))
             for tag_name in task.tags:
                 postgres_client.upsert_tag_and_link(task_id=task.task_id, tag_name=tag_name)
         except SQLAlchemyError as error:
             logger.error("Failed to write task %s to Postgres: %s", task.task_id, error)
-            sentry_sdk.capture_exception(error)    
+            sentry_sdk.capture_exception(error)
 
     for detail in details:
         try:
@@ -88,7 +75,9 @@ def sync_jira(etl: EtlService, postgres_client: PostgresClient, name_to_id: dict
     # report — usually a Jira priority or issue type missing from the enums.
     logger.info(
         "Jira: %s issues fetched, %s tasks written, %s discarded",
-        len(raw_issues), len(tasks), len(raw_issues) - len(tasks),
+        len(raw_issues),
+        len(tasks),
+        len(raw_issues) - len(tasks),
     )
     return tasks
 
@@ -129,9 +118,11 @@ def sync_clockify(
                 horas=time_entry.hours,
             )
         except SQLAlchemyError as error:
-            logger.error("Failed to write time entry %s to Postgres: %s", time_entry.entry_id, error)
+            logger.error(
+                "Failed to write time entry %s to Postgres: %s", time_entry.entry_id, error
+            )
             sentry_sdk.capture_exception(error)
-            
+
     logger.info("Clockify: %s time entries written", len(time_entries))
     return time_entries
 
