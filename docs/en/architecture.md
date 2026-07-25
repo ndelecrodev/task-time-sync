@@ -11,12 +11,20 @@ An execution (`sop_pipeline.pipeline.run`) is a linear sequence with three isola
  1. StorageClient.download_file
     B2 ──────────────────────────────▶ planilha_temp.xlsx (local disk)
 
- 2. EmployeeSyncService.sync
+ 2. EmployeeDataSyncService.sync + .sync_areas
     ExcelReader.read_employees        ── DIM_FUNCIONARIO tab
         │  list[dict]
         ▼
     PostgresClient.upsert_employee  ─▶ funcionarios table (Postgres/Supabase)
     ExcelWriter.save_duplicates     ─▶ DUPLICADOS_REMOVIDOS tab (repeated-email rows)
+
+    name_to_id = {canonical_name: id}, built from funcionarios (Postgres)
+
+    ExcelReader.read_dim_employee_area   ── DIM_FUNCIONARIO_AREA tab
+    ExcelReader.read_fato_employee_area  ── FATO_FUNCIONARIO_AREA tab
+        │  list[dict]
+        ▼
+    PostgresClient.upsert_area_and_link ─▶ areas, funcionario_area tables (Postgres/Supabase)
 
  3. sync_jira
     JiraClient.fetch_tasks(JIRA_JQL)          ── pagination by nextPageToken
@@ -31,6 +39,8 @@ An execution (`sop_pipeline.pipeline.run`) is a linear sequence with three isola
     ExcelWriter.save_details  ─▶ tab DETALHES_TAREFA
     PostgresClient.upsert_task / upsert_task_detail / upsert_tag_and_link
                                ─▶ tarefas, detalhes_tarefa, etiquetas, tarefa_etiqueta tables
+    PostgresClient.archive_missing_tasks
+                               ─▶ marks tarefas.arquivada_em on tasks missing from JIRA_JQL (never deletes)
 
  4. sync_clockify
     ClockifyClient.list_users
@@ -62,12 +72,24 @@ Postgres runs in parallel with the spreadsheet, not instead of it: steps 3
 and 4 write the same information to both destinations, one upsert per row
 in each.
 
+`ExcelReader.read_employees`, `read_dim_employee_area`, and `read_fato_employee_area`
+are thin wrappers over a single generic method, `read_sheet_as_dicts(file_path,
+sheet_name, table_name)`, which holds the logic for opening the workbook, finding
+the table, and building the list of row dicts. Each wrapper only fixes the sheet
+and table name it reads.
+
+Tasks that disappear from the `JIRA_JQL` result (closed out of scope, moved,
+deleted) are not removed from Postgres: `PostgresClient.archive_missing_tasks`
+stamps `tarefas.arquivada_em` with the current run's timestamp on every row
+whose `task_id` didn't come back in the fetch, keeping the full history instead
+of deleting it.
+
 ## Layers
 
 | Layer | Modules | Rule |
 |---|---|---|
 | **Clients** | `clients/jira_client.py`, `clients/clockify_client.py`, `clients/postgres_client.py` | Speak HTTP/SQL and pagination. `PostgresClient` upserts into the Supabase schema through SQLAlchemy; the other two return raw `dict`, without interpreting anything. |
-| **Services** | `services/etl_service.py`, `services/alert_service.py`, `services/employee_sync_service.py` | Business logic. `EtlService` and `AlertService` do no network or file I/O; `EmployeeSyncService` is the deliberate exception, since it orchestrates `ExcelReader` and `PostgresClient` to sync `DIM_FUNCIONARIO`. |
+| **Services** | `services/etl_service.py`, `services/alert_service.py`, `services/employee_data_sync_service.py` | Business logic. `EtlService` and `AlertService` do no network or file I/O; `EmployeeDataSyncService` (renamed from `EmployeeSyncService`) is the deliberate exception, since it orchestrates `ExcelReader` and `PostgresClient` to sync identity (`DIM_FUNCIONARIO`) and area links (`DIM_FUNCIONARIO_AREA` + `FATO_FUNCIONARIO_AREA`) into Postgres. |
 | **Integrations** | `integrations/excel_writer.py`, `notifier.py`, `storage_client.py` | Pipeline outputs. Each knows one external destination. |
 | **Models** | `models/schemas.py` | Contract between layers. Validation via Pydantic. |
 | **Config** | `config/settings.py` | Single point that reads the environment. |
