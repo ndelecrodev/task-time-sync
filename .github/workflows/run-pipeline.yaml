@@ -2,7 +2,7 @@ name: Run pipeline
 
 on:
   schedule:
-    - cron: "13 9 * * *"
+    - cron: "47 8 * * *"
   workflow_dispatch:
 
 jobs:
