@@ -15,7 +15,6 @@ translating them would break the lookups at runtime.
 from datetime import date
 from enum import Enum
 
-
 from sop_pipeline.errors.exceptions import ExcelWriteError
 from sop_pipeline.models.schemas import Task, TaskDetail, TimeEntry
 from sop_pipeline.integrations.excel_workbook import open_workbook, create_column_map
@@ -377,3 +376,53 @@ class ExcelWriter:
             workbook.save(file_path)
         except (OSError, KeyError, ValueError) as error:
             raise ExcelWriteError(f"Failed to save duplicates to {file_path}: {error}") from error
+
+    @staticmethod
+    def save_progress_snapshot(
+        file_path: str, snapshot_date: date, total_tarefas: int, concluidas: int
+    ) -> None:
+        """Upsert one day's completion snapshot into ``HISTORICO_PROGRESSO``.
+
+        Unlike ``dias_restantes``/``atrasado``/``status_prazo`` (see
+        design-decisions.md decision 2), ``percentual`` is written here as a value
+        computed by Python, not left as an Excel formula. Those columns are
+        deliberately kept live because they describe the *current* state of a
+        task that is still open. This column is the opposite case: it is a
+        historical snapshot, and the whole point of ``HISTORICO_PROGRESSO`` is to
+        record what the completion percentage *was* on ``snapshot_date``. A live
+        formula recalculating `concluidas/total` from today's data would make
+        every past row silently drift to reflect today's totals instead, erasing
+        the history the sheet exists to keep.
+
+        Args:
+            file_path: Path to the local workbook.
+            snapshot_date: The date this snapshot represents; also the upsert key.
+            total_tarefas: Total task count at the time of the snapshot.
+            concluidas: Count of tasks with a non-null completion date.
+
+        Raises:
+            ExcelWriteError: If the workbook cannot be updated or saved.
+        """
+        if total_tarefas == 0:
+            percentual = 0
+        else:
+            percentual = concluidas / total_tarefas
+
+        try:
+            workbook = open_workbook(file_path=file_path)
+            worksheet = workbook["HISTORICO_PROGRESSO"]
+            table = worksheet.tables["historico_progresso"]
+            row = find_row(worksheet, snapshot_date, table)
+            if row is None:
+                row = next_row(table)
+                expand_table(table, row)
+            worksheet.cell(row=row, column=1, value=snapshot_date)
+            worksheet.cell(row=row, column=2, value=total_tarefas)
+            worksheet.cell(row=row, column=3, value=concluidas)
+            worksheet.cell(row=row, column=4, value=percentual)
+
+            workbook.save(file_path)
+        except (OSError, KeyError, ValueError) as error:
+            raise ExcelWriteError(
+                f"Failed to save and insert value in progress_snapshot to {file_path}: {error}"
+            ) from error
