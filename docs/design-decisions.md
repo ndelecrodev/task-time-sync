@@ -335,3 +335,22 @@ tinham antes de a tarefa desaparecer da busca, não serem sobrescritos ou
 zerados. Se um `task_id` vindo do Postgres não tiver linha correspondente em
 `BASE_TAREFAS` (não deveria acontecer, já que a tarefa foi escrita lá antes
 de ser arquivada), o método pula essa tarefa em vez de lançar erro.
+
+## 20. `HISTORICO_PROGRESSO.percentual` é gravado como valor, não como fórmula do Excel
+
+`ExcelWriter.save_progress_snapshot` calcula `percentual = concluidas /
+total_tarefas` em Python e escreve o resultado na célula. Diferente de
+`dias_restantes`, `atrasado` e `status_prazo` (decisão 2), essa coluna não
+está de fora do que o Python grava — ela é sempre um valor estático.
+
+**Por quê:** a decisão 2 existe porque aquelas colunas descrevem o estado
+*atual* de uma tarefa ainda aberta, e por isso devem recalcular sozinhas toda
+vez que alguém abre a planilha. `HISTORICO_PROGRESSO` é o caso oposto: cada
+linha é um retrato do progresso em uma data específica (`snapshot_date`), e a
+razão de existir dessa aba é justamente preservar esse retrato. Se
+`percentual` fosse fórmula, ela recalcularia com os totais de hoje toda vez
+que o arquivo fosse aberto, e cada linha antiga passaria a mentir sobre o
+que o progresso realmente era na data que ela representa — apagando
+silenciosamente o próprio histórico que a aba deveria guardar. Gravar o
+valor no momento do snapshot é o que faz da linha um registro histórico de
+verdade, em vez de mais uma visão do presente.
