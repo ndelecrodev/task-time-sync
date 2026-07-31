@@ -4,6 +4,7 @@ One run downloads the workbook from B2, refreshes it with Jira and Clockify data
 uploads it back and notifies the team about tasks approaching their deadline.
 """
 
+from datetime import date
 import logging
 
 import requests
@@ -14,6 +15,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sop_pipeline.clients.clockify_client import ClockifyClient
 from sop_pipeline.clients.jira_client import JiraClient
 from sop_pipeline.config.settings import settings, engine
+from sop_pipeline.errors.exceptions import ExcelWriteError
 from sop_pipeline.integrations.excel_writer import ExcelWriter
 from sop_pipeline.integrations.notifier import Notifier
 from sop_pipeline.integrations.storage_client import StorageClient
@@ -210,6 +212,20 @@ def run() -> None:
     if tasks is None:
         logger.warning("Skipping alerts: the Jira synchronisation did not complete")
     else:
+        total_tarefas = len(tasks)
+        concluidas = 0
+        for i in tasks:
+            if i.completion_date is not None:
+                concluidas += 1
+        # Own try/except, isolated from the process_alerts one below: a
+        # snapshot-save failure must not block alert delivery, and vice versa.
+        try:
+            ExcelWriter.save_progress_snapshot(
+                settings.TEMP_EXCEL_PATH, date.today(), total_tarefas, concluidas
+            )
+        except ExcelWriteError as error:
+            logger.error("Failed to save progress snapshot: %s", error)
+            sentry_sdk.capture_exception(error)
         try:
             process_alerts(tasks)
         except Exception as error:  # pylint: disable=broad-except

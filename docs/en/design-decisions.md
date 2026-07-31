@@ -316,3 +316,22 @@ task dropped out of the fetch, not get overwritten or cleared. If a
 `task_id` coming from Postgres has no matching row in `BASE_TAREFAS` (it
 shouldn't, since the task was written there before being archived), the
 method skips it instead of raising.
+
+## 20. `HISTORICO_PROGRESSO.percentual` is written as a value, not an Excel formula
+
+`ExcelWriter.save_progress_snapshot` computes `percentual = concluidas /
+total_tarefas` in Python and writes the result into the cell. Unlike
+`dias_restantes`, `atrasado`, and `status_prazo` (decision 2), this column
+is not left out of what Python writes — it is always a static value.
+
+**Why:** decision 2 exists because those columns describe the *current*
+state of a task that is still open, and so they need to recalculate on
+their own every time someone opens the spreadsheet. `HISTORICO_PROGRESSO`
+is the opposite case: each row is a snapshot of progress on a specific date
+(`snapshot_date`), and the entire reason that sheet exists is to preserve
+that snapshot. If `percentual` were a formula, it would recompute against
+today's totals every time the file is opened, and every past row would
+silently start lying about what progress actually was on the date it
+represents — erasing the very history the sheet is meant to keep. Writing
+the value at snapshot time is what makes the row a genuine historical
+record instead of one more view of the present.
