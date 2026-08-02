@@ -89,7 +89,8 @@ class Notifier:
         area = task.area.lower() if task.area else None
         webhook_url = Notifier._resolve_webhook(area)
         message = Notifier._build_message(task)
-        payload = {"text": message, "email": task.assignee_email}
+        email = task.assignee_email or ""
+        payload = {"text": message, "email": email}
         try:
             response = requests.post(webhook_url, json=payload, timeout=10)
             response.raise_for_status()

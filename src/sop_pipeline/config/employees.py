@@ -101,3 +101,21 @@ class EmployeeRegistry:
                 return canonical
 
         return None
+
+    def get_jira_email(self, canonical_name: str) -> str | None:
+        """Resolve a canonical name back to its registered Jira email.
+
+        Args:
+            canonical_name: The employee's canonical name.
+
+        Returns:
+            str | None: The registered Jira email, or ``None`` if no
+            employee matches this name.
+        """
+        name_lower = canonical_name.lower()
+
+        for canonical, employee in self._by_canonical_name.items():
+            if canonical.lower() == name_lower:
+                return employee.jira_email
+
+        return None
