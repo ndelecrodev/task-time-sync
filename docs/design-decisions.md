@@ -354,3 +354,30 @@ que o progresso realmente era na data que ela representa — apagando
 silenciosamente o próprio histórico que a aba deveria guardar. Gravar o
 valor no momento do snapshot é o que faz da linha um registro histórico de
 verdade, em vez de mais uma visão do presente.
+
+## 21. `EtlService._build_task` recorre a `EmployeeRegistry.get_jira_email` quando o Jira não informa o e-mail do assignee
+
+Quando `fields.assignee.emailAddress` vem nulo mas há um assignee de fato
+(`fields.assignee` não é `None`), `_build_task` primeiro normaliza o
+`displayName` do Jira para o nome canônico via
+`normalize_employee_identifier`, e só então chama
+`EmployeeRegistry.get_jira_email` com esse nome já canonicalizado, nunca
+com o `displayName` bruto. O fallback não roda no branch de tarefa sem
+responsável (`fields.assignee is None`), onde `assignee` é o sentinel
+`NO_RESPONSIBLE` — chamar `get_jira_email` com um sentinel como se fosse
+nome de pessoa não faz sentido e nunca deve acontecer.
+
+**Por quê:** as configurações de privacidade de visibilidade de e-mail por
+usuário do Jira Cloud (uma mudança da era GDPR) podem deixar
+`emailAddress` nulo mesmo para um assignee corretamente definido e
+visível em qualquer outro lugar do Jira — isso é comportamento esperado
+do Jira, não um dado faltando por falha deste projeto. Usar o nome já
+canonicalizado, e não o `displayName` bruto do Jira, é essencial: os
+nomes cadastrados na `DIM_FUNCIONARIO` podem divergir do `displayName`
+que o Jira retorna, e foi exatamente essa divergência que causou um bug
+anterior envolvendo um colaborador chamado "Miguel Felix Cardozo de
+Tomy" — buscar pelo nome bruto teria o mesmo problema aqui. Com isso, o
+cadastro de colaboradores (`DIM_FUNCIONARIO` / `EmployeeRegistry`) passa
+a ser a segunda fonte de verdade para o e-mail de um colaborador,
+especificamente para permitir @menções no Teams quando o próprio Jira
+não fornece um e-mail.

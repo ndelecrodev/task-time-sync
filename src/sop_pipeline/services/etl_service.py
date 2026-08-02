@@ -128,7 +128,13 @@ class EtlService:
             assignee = self.normalize_employee_identifier(assignee_email)
         else:
             assignee = self.normalize_employee_identifier(assignee)
-            assignee_email = self.employee_registry.get_jira_email(assignee)
+            # Jira Cloud's per-user email-visibility privacy settings (GDPR-era)
+            # can leave fields.assignee.emailAddress null even for a correctly
+            # assigned, visible user; fall back to the registry so outbound Teams
+            # @mentions still have an email. Never applies to an unassigned issue
+            # (fields["assignee"] is None), whose sentinel name isn't a real employee.
+            if fields["assignee"] is not None:
+                assignee_email = self.employee_registry.get_jira_email(assignee)
 
         if fields[self.jira_customfield_area] is None:
             area = NO_AREA

@@ -335,3 +335,28 @@ silently start lying about what progress actually was on the date it
 represents — erasing the very history the sheet is meant to keep. Writing
 the value at snapshot time is what makes the row a genuine historical
 record instead of one more view of the present.
+
+## 21. `EtlService._build_task` falls back to `EmployeeRegistry.get_jira_email` when Jira omits the assignee's email
+
+When `fields.assignee.emailAddress` comes back null but there is an
+actual assignee (`fields.assignee` is not `None`), `_build_task` first
+normalizes the Jira `displayName` to the canonical name via
+`normalize_employee_identifier`, and only then calls
+`EmployeeRegistry.get_jira_email` with that already-canonicalized name,
+never with the raw `displayName`. The fallback does not run on the
+no-assignee branch (`fields.assignee is None`), where `assignee` is the
+`NO_RESPONSIBLE` sentinel — calling `get_jira_email` with a sentinel as
+if it were a person's name makes no sense and must never happen.
+
+**Why:** Jira Cloud's per-user email-visibility privacy settings (a
+GDPR-era change) can leave `emailAddress` null even for an assignee that
+is correctly set and visible everywhere else in Jira — this is expected
+Jira behavior, not missing data on this project's side. Using the
+already-canonicalized name instead of Jira's raw `displayName` is
+essential: names registered in `DIM_FUNCIONARIO` can differ from the
+`displayName` Jira returns, and that exact mismatch caused an earlier
+bug involving an employee named "Miguel Felix Cardozo de Tomy" —
+looking up the raw name here would hit the same problem. This makes the
+employee registry (`DIM_FUNCIONARIO` / `EmployeeRegistry`) a second
+source of truth for an employee's email, specifically so outbound Teams
+@mentions still have one when Jira itself won't provide it.
