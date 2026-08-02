@@ -7,6 +7,7 @@ than dropped.
 """
 
 import logging
+from unittest.mock import patch
 
 import pytest
 
@@ -170,6 +171,61 @@ def test_transform_tasks_unassigned_issue_uses_placeholder(
     result = etl_service.transform_tasks([make_jira_issue(assignee=None)])
 
     assert result[0].assignee == NO_RESPONSIBLE
+
+
+def test_transform_tasks_missing_email_falls_back_to_registry_when_mapped(
+    etl_service: EtlService, make_jira_issue
+) -> None:
+    """No email from Jira, but the resolved canonical name is registered: use its Jira email."""
+    result = etl_service.transform_tasks(
+        [make_jira_issue(assignee={"displayName": "Alice Silva", "emailAddress": None})]
+    )
+
+    assert result[0].assignee == "Alice Silva"
+    assert result[0].assignee_email == "alice.jira@example.com"
+
+
+def test_transform_tasks_missing_email_and_unmapped_name_leaves_email_none(
+    etl_service: EtlService, make_jira_issue
+) -> None:
+    """No email from Jira and the name isn't registered either: no crash, no wrong fallback."""
+    result = etl_service.transform_tasks(
+        [make_jira_issue(assignee={"displayName": "Ghost Person", "emailAddress": None})]
+    )
+
+    assert result[0].assignee == "Unmapped employee: Ghost Person"
+    assert result[0].assignee_email is None
+
+
+def test_transform_tasks_with_email_never_consults_registry_fallback(
+    etl_service: EtlService, make_jira_issue
+) -> None:
+    """When Jira already supplies an email, the registry fallback is never consulted."""
+    with patch.object(
+        etl_service.employee_registry,
+        "get_jira_email",
+        wraps=etl_service.employee_registry.get_jira_email,
+    ) as spy:
+        result = etl_service.transform_tasks([make_jira_issue()])
+
+    assert result[0].assignee_email == "alice.jira@example.com"
+    spy.assert_not_called()
+
+
+def test_transform_tasks_unassigned_issue_never_consults_registry_fallback(
+    etl_service: EtlService, make_jira_issue
+) -> None:
+    """An unassigned issue's sentinel name is never passed to the registry lookup."""
+    with patch.object(
+        etl_service.employee_registry,
+        "get_jira_email",
+        wraps=etl_service.employee_registry.get_jira_email,
+    ) as spy:
+        result = etl_service.transform_tasks([make_jira_issue(assignee=None)])
+
+    assert result[0].assignee == NO_RESPONSIBLE
+    assert result[0].assignee_email is None
+    spy.assert_not_called()
 
 
 # --- transform_details (basics + the divergence at the ETL layer) ----------------
