@@ -128,6 +128,7 @@ class EtlService:
             assignee = self.normalize_employee_identifier(assignee_email)
         else:
             assignee = self.normalize_employee_identifier(assignee)
+            assignee_email = self.employee_registry.get_jira_email(assignee)
 
         if fields[self.jira_customfield_area] is None:
             area = NO_AREA
