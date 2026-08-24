@@ -29,9 +29,9 @@ class Settings(BaseSettings):
     # Tells pydantic-settings where to look for the environment variables.
     model_config = {"env_file": ".env"}
 
-    JIRA_URL: str
-    JIRA_EMAIL: str
-    JIRA_API_TOKEN: str
+    CLICKUP_API_TOKEN: str
+    CLICKUP_TEAM_ID: str
+    CLICKUP_LIST_ID: str
     API_KEY_CLOCKIFY: str
     WORKSPACE_ID: str
     ALERT_DAYS_LOW: int = Field(
@@ -44,7 +44,7 @@ class Settings(BaseSettings):
         default=4, description="Days ahead that triggers a medium-priority alert"
     )
     WORKSPACE_NAME: str | None = None
-    JIRA_CUSTOMFIELD_AREA: str
+    CLICKUP_AREA_FIELD_ID: str
     WEBHOOK_TI: str
     WEBHOOK_SOP: str
     WEBHOOK_IA: str
@@ -60,7 +60,6 @@ class Settings(BaseSettings):
     B2_APPLICATION_KEY: str
     B2_KEY_ID: str
     TEMP_EXCEL_PATH: str = Field(default="planilha_temp.xlsx")
-    JIRA_JQL: str
     EXCEL_CLOUD_NAME: str
     SENTRY_DSN: str
     BETTERSTACK_HEARTBEAT_URL: str
@@ -102,9 +101,9 @@ class Settings(BaseSettings):
         """Map an area name to the Teams webhook that serves it.
 
         The keys (other than the fallback) must match, in lowercase, the values
-        produced by the Jira "area" custom field — ``Notifier`` looks the area up
-        directly in this dict. ``"no area"`` is an internal fallback key and is
-        never compared against Jira data.
+        produced by the ClickUp "area" custom field — ``Notifier`` looks the area
+        up directly in this dict. ``"no area"`` is an internal fallback key and is
+        never compared against ClickUp data.
 
         Returns:
             dict[str, str]: Area name in lowercase mapped to its webhook URL.

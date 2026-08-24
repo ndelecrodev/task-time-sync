@@ -17,9 +17,13 @@ import pytest
 # the standard pytest idiom, not the bug redefined-outer-name is meant to catch.
 # pylint: disable=redefined-outer-name
 
-# The Jira "area" custom-field id the fake Settings is configured with; the Jira
-# issue factory keys the area field by this so _build_task can read it back.
-AREA_FIELD = "customfield_10001"
+# The ClickUp "area" custom-field id the fake Settings is configured with; the
+# ClickUp task factory keys the area field by this so _build_task can read it back.
+AREA_FIELD_ID = "8dffc5a5-fake-clickup-area-field"
+
+#: Options of the fake area drop-down field, in index order — mirrors the real
+#: workspace's exact option set (ti, sop, ia, back-end, front-end, design, data).
+AREA_OPTIONS = ["ti", "sop", "ia", "back-end", "front-end", "design", "data"]
 
 # Obviously fake, example.com-style values for every variable Settings requires.
 # Real environment variables outrank the .env file in pydantic-settings, so these
@@ -27,12 +31,12 @@ AREA_FIELD = "customfield_10001"
 # DATABASE_URL uses sqlite so create_engine never needs a real driver or server;
 # the engine is never actually used because every DB access is mocked.
 _FAKE_ENV = {
-    "JIRA_URL": "https://jira.example.com",
-    "JIRA_EMAIL": "pipeline@example.com",
-    "JIRA_API_TOKEN": "fake-jira-token",
+    "CLICKUP_API_TOKEN": "fake-clickup-token",
+    "CLICKUP_TEAM_ID": "fake-team-id",
+    "CLICKUP_LIST_ID": "fake-list-id",
     "API_KEY_CLOCKIFY": "fake-clockify-key",
     "WORKSPACE_ID": "fake-workspace-id",
-    "JIRA_CUSTOMFIELD_AREA": AREA_FIELD,
+    "CLICKUP_AREA_FIELD_ID": AREA_FIELD_ID,
     "WEBHOOK_TI": "https://teams.example.com/ti",
     "WEBHOOK_SOP": "https://teams.example.com/sop",
     "WEBHOOK_IA": "https://teams.example.com/ia",
@@ -45,7 +49,6 @@ _FAKE_ENV = {
     "B2_BUCKET_NAME": "fake-bucket",
     "B2_APPLICATION_KEY": "fake-app-key",
     "B2_KEY_ID": "fake-key-id",
-    "JIRA_JQL": "project = FAKE",
     "EXCEL_CLOUD_NAME": "planilha.xlsx",
     "SENTRY_DSN": "https://public@sentry.example.com/1",
     "BETTERSTACK_HEARTBEAT_URL": "https://uptime.example.com/heartbeat",
@@ -100,34 +103,44 @@ def etl_service(employee_registry: EmployeeRegistry) -> EtlService:
 
 
 @pytest.fixture
-def make_jira_issue():
-    """Factory for a raw Jira issue dict; keyword overrides replace ``fields`` keys.
+def make_clickup_task():
+    """Factory for a raw ClickUp task dict; keyword overrides replace top-level keys.
 
-    The defaults describe one fully valid issue assigned to Alice. Pass ``key`` to
-    change the issue key, or any ``fields`` key (e.g. ``priority={"name": "Critical"}``
-    or ``priority=None``) to build the malformed variants the tests need.
+    The defaults describe one fully valid task assigned to Alice, with the area
+    field pointing at option index 0 ("ti"). Pass ``task_id`` to change the
+    task's ClickUp id, or any top-level key (e.g. ``priority={"priority":
+    "urgent"}`` or ``priority=None``) to build the malformed variants the tests
+    need.
     """
 
-    def _make(key: str = "ABC-1", **field_overrides) -> dict:
-        fields = {
-            "summary": "Do the thing",
-            "assignee": {
-                "displayName": "Alice Silva",
-                "emailAddress": "alice.jira@example.com",
-            },
-            "priority": {"name": "High"},
-            "status": {"name": "In Progress"},
-            AREA_FIELD: {"value": "TI"},
-            "created": "2026-01-01T09:00:00.000-0300",
-            "duedate": "2026-02-01",
-            "resolutiondate": None,
-            "issuetype": {"name": "Task"},
-            "creator": {"displayName": "Carol Lima"},
-            "updated": "2026-01-05T09:00:00.000-0300",
-            "labels": ["backend"],
+    def _make(task_id: str = "86b2xyz1", **overrides) -> dict:
+        task = {
+            "id": task_id,
+            "name": "Do the thing",
+            "assignees": [
+                {"username": "Alice Silva", "email": "alice.jira@example.com"},
+            ],
+            "priority": {"priority": "high"},
+            "status": {"status": "In Progress"},
+            "custom_fields": [
+                {
+                    "id": AREA_FIELD_ID,
+                    "type": "drop_down",
+                    "type_config": {"options": [{"name": name} for name in AREA_OPTIONS]},
+                    "value": 0,
+                }
+            ],
+            "date_created": "1735689600000",
+            "due_date": "1738368000000",
+            "date_closed": None,
+            "date_updated": "1735948800000",
+            "creator": {"username": "Carol Lima"},
+            "tags": [{"name": "backend"}],
+            "description": "Full description",
+            "text_content": None,
         }
-        fields.update(field_overrides)
-        return {"key": key, "fields": fields}
+        task.update(overrides)
+        return task
 
     return _make
 

@@ -137,7 +137,7 @@ class ExcelWriter:
 
         Only the arquivada_em column is touched; every other field on
         these rows keeps its last known value from before the task
-        disappeared from Jira, by design (see design-decisions.md).
+        disappeared from ClickUp, by design (see design-decisions.md).
 
         Args:
             file_path: Path to the local workbook.
@@ -199,7 +199,7 @@ class ExcelWriter:
         Args:
             worksheet: The ``FATO_TAREFA_ETIQUETA`` worksheet.
             table: The fact table holding the associations.
-            task_id: Jira issue key.
+            task_id: Task ID.
             tag_id: Surrogate tag ID.
         """
         new_row = next_row(table)

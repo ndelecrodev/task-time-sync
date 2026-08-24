@@ -1,4 +1,4 @@
-"""Pipeline-level tests for sync_jira and sync_clockify (scenarios #5 and #12).
+"""Pipeline-level tests for sync_clickup and sync_clockify (scenarios #5 and #12).
 
 Every external client and the Excel writer are mocked; a real EtlService runs the
 transforms. These prove two contracts: no detail is written for a task_id that
@@ -10,30 +10,32 @@ from unittest.mock import MagicMock, patch
 
 from sqlalchemy.exc import SQLAlchemyError
 
-from sop_pipeline.pipeline import sync_clockify, sync_jira
+from sop_pipeline.pipeline import sync_clickup, sync_clockify
 
 
-def test_sync_jira_does_not_write_detail_for_discarded_task(etl_service, make_jira_issue) -> None:
+def test_sync_clickup_does_not_write_detail_for_discarded_task(
+    etl_service, make_clickup_task
+) -> None:
     """A detail is never written for a task_id absent from the final tasks list.
 
-    The bad-priority issue is discarded by transform_tasks but would still get a
+    The null-priority task is discarded by transform_tasks but would still get a
     detail from transform_details; the pipeline's valid_ids filter must drop it
     before both the Excel write and the Postgres upsert.
     """
-    issues = [
-        make_jira_issue(key="ABC-1"),
-        make_jira_issue(key="ABC-2", priority={"name": "Critical"}),
+    tasks = [
+        make_clickup_task(task_id="ABC-1"),
+        make_clickup_task(task_id="ABC-2", priority=None),
     ]
     postgres_client = MagicMock()
 
     with (
-        patch("sop_pipeline.pipeline.JiraClient") as jira_cls,
+        patch("sop_pipeline.pipeline.ClickUpClient") as clickup_cls,
         patch("sop_pipeline.pipeline.ExcelWriter") as excel,
     ):
-        jira_cls.return_value.fetch_tasks.return_value = issues
-        tasks = sync_jira(etl_service, postgres_client, {})
+        clickup_cls.return_value.fetch_tasks.return_value = tasks
+        result = sync_clickup(etl_service, postgres_client, {})
 
-    assert [task.task_id for task in tasks] == ["ABC-1"]
+    assert [task.task_id for task in result] == ["ABC-1"]
 
     saved_details = excel.save_details.call_args.args[1]
     assert [detail.task_id for detail in saved_details] == ["ABC-1"]
@@ -45,9 +47,11 @@ def test_sync_jira_does_not_write_detail_for_discarded_task(etl_service, make_ji
     assert "ABC-2" not in upserted_detail_ids
 
 
-def test_sync_jira_one_failing_upsert_does_not_stop_the_rest(etl_service, make_jira_issue) -> None:
+def test_sync_clickup_one_failing_upsert_does_not_stop_the_rest(
+    etl_service, make_clickup_task
+) -> None:
     """A SQLAlchemyError on one task is isolated; the others and the Excel write proceed."""
-    issues = [make_jira_issue(key=f"ABC-{n}") for n in (1, 2, 3)]
+    tasks = [make_clickup_task(task_id=f"ABC-{n}") for n in (1, 2, 3)]
     postgres_client = MagicMock()
 
     def fail_on_abc2(**kwargs) -> None:
@@ -57,11 +61,11 @@ def test_sync_jira_one_failing_upsert_does_not_stop_the_rest(etl_service, make_j
     postgres_client.upsert_task.side_effect = fail_on_abc2
 
     with (
-        patch("sop_pipeline.pipeline.JiraClient") as jira_cls,
+        patch("sop_pipeline.pipeline.ClickUpClient") as clickup_cls,
         patch("sop_pipeline.pipeline.ExcelWriter") as excel,
     ):
-        jira_cls.return_value.fetch_tasks.return_value = issues
-        sync_jira(etl_service, postgres_client, {})
+        clickup_cls.return_value.fetch_tasks.return_value = tasks
+        sync_clickup(etl_service, postgres_client, {})
 
     # All three tasks were attempted despite ABC-2 raising, and the workbook write
     # (which happens before the upsert loop) still occurred.

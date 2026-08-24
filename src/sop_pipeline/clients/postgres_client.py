@@ -55,7 +55,7 @@ class Funcionarios(Base):
 
 
 class Tarefas(Base):
-    """A Jira issue, mirrors the ``tarefas`` table."""
+    """A task, mirrors the ``tarefas`` table."""
 
     __tablename__ = "tarefas"
 
@@ -178,7 +178,9 @@ class PostgresClient:
 
         Args:
             canonical_name: The normalized name used as the join key.
-            jira_email: The email address that appears in Jira.
+            jira_email: The registered email address, matched against ClickUp
+                assignees; stored under this column name for compatibility
+                with the deployed Supabase schema.
             clockify_email: The email address that appears in Clockify.
             photo_url: Public Supabase Storage URL for the employee's photo,
                 or ``None`` when no photo has been uploaded yet.
@@ -209,7 +211,7 @@ class PostgresClient:
             session.commit()
 
     def upsert_task(self, task: Task, responsavel_id: int | None) -> None:
-        """Insert or update a task, matched by its Jira issue key.
+        """Insert or update a task, matched by its task ID.
 
         Args:
             task: The task to persist.
@@ -253,10 +255,10 @@ class PostgresClient:
             session.commit()
 
     def upsert_task_detail(self, task_id: str, descricao: str | None) -> None:
-        """Insert or update a task's description, matched by its Jira issue key.
+        """Insert or update a task's description, matched by its task ID.
 
         Args:
-            task_id: Jira issue key; the upsert key.
+            task_id: Task ID; the upsert key.
             descricao: Flattened plain-text description, or ``None`` when empty.
         """
         with Session(self.engine) as session:
@@ -305,7 +307,7 @@ class PostgresClient:
         recorded, since a task can be synced more than once.
 
         Args:
-            task_id: Jira issue key.
+            task_id: Task ID.
             tag_name: The tag name to resolve or create.
         """
         with Session(self.engine) as session:
@@ -359,7 +361,7 @@ class PostgresClient:
         """Mark as archived every active task not present in the latest sync.
 
         Args:
-            seen_task_ids: Every task_id returned by this run's Jira fetch.
+            seen_task_ids: Every task_id returned by this run's ClickUp fetch.
         """
         with Session(self.engine) as session:
             stmt = (

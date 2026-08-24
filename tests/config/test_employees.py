@@ -113,15 +113,15 @@ def test_resolve_prefers_clockify_email_over_canonical_name() -> None:
     assert registry.resolve("shared-name@example.com") == "Bob Souza"
 
 
-def test_get_jira_email_matches_canonical_name_case_insensitively(
+def test_get_registered_email_matches_canonical_name_case_insensitively(
     employee_registry: EmployeeRegistry,
 ) -> None:
-    """A canonical-name lookup in a different casing still resolves to the Jira email."""
-    assert employee_registry.get_jira_email("ALICE SILVA") == "alice.jira@example.com"
+    """A canonical-name lookup in a different casing still resolves to the registered email."""
+    assert employee_registry.get_registered_email("ALICE SILVA") == "alice.jira@example.com"
 
 
-def test_get_jira_email_returns_none_for_unregistered_name(
+def test_get_registered_email_returns_none_for_unregistered_name(
     employee_registry: EmployeeRegistry,
 ) -> None:
     """A name absent from the registry resolves to None, not an exception."""
-    assert employee_registry.get_jira_email("Stranger Person") is None
+    assert employee_registry.get_registered_email("Stranger Person") is None
