@@ -10,7 +10,7 @@ Record of non-obvious choices in the project and the reasoning behind them.
 `ExcelWriter._find_row` traverses column 1 of the table looking for the ID. If found, it overwrites the row; if not, it adds a new one.
 
 **Why:** makes execution **idempotent**. The pipeline runs on schedule and
-the `JIRA_JQL` usually brings back issues that are already in the spreadsheet. Without
+the fetch to `CLICKUP_LIST_ID` usually brings back tasks that are already in the spreadsheet. Without
 upsert, each execution would duplicate rows. With it, running twice in a row
 produces exactly the same file.
 
@@ -97,18 +97,18 @@ will prevent it from running.
 `transform_tasks`, `transform_details`, and `transform_time_entries` catch
 `ValidationError` and `KeyError` **per record**, log a `warning`, and continue.
 
-**Why:** a single issue with a missing field can't cost the entire day's synchronization. The warning goes to Better Stack for later investigation.
+**Why:** a single task with a missing field can't cost the entire day's synchronization. The warning goes to Better Stack for later investigation.
 
-**Trade-off:** a systematic error (for example, `JIRA_CUSTOMFIELD_AREA`
+**Trade-off:** a systematic error (for example, `CLICKUP_AREA_FIELD_ID`
 pointing to a field that no longer exists) would show up as "all tasks were skipped", with execution apparently succeeding. That's why the discard is logged at
-**ERROR** level and sent to Sentry, and the sync end log includes a count: `"Jira: N issues fetched, M tasks written, K discarded"` — a `K` above
-zero is a sign of structural trouble, typically a new priority or issue type in Jira that doesn't exist in the enums in `models/schemas.py`.
+**ERROR** level and sent to Sentry, and the sync end log includes a count: `"ClickUp: N tasks fetched, M tasks written, K discarded"` — a `K` above
+zero is a sign of structural trouble, typically a priority ClickUp sent that isn't in the mapping in `EtlService` (see decision 22).
 
 **Caution when editing this `except`:** it explicitly lists `AttributeError` and
 `TypeError` (the tuple `RECORD_ERRORS`) besides `ValidationError`/`KeyError`. Without
-them, an unexpected `null` field from Jira throws `AttributeError`, escapes the loop, and
+them, an unexpected `null` field from the task source throws `AttributeError`, escapes the loop, and
 brings down the entire batch — the opposite of per-record isolation that this decision
-promises. This was exactly the bug: `priority: null` in a single issue would lose all the others.
+promises. This was exactly the bug, back in the Jira era: `priority: null` in a single issue would lose all the others.
 
 ## 9. Custom exceptions cover only I/O edges
 
@@ -126,27 +126,29 @@ Every `__init__.py` has only a docstring; modules are imported by full path.
 **Why:** `config/settings.py` instantiates `Settings()` on import, which reads and validates the `.env`. With reexportation in `integrations/__init__.py`, importing
 `ExcelWriter` would pull in `Notifier`, which would pull in settings — and would suddenly require a complete `.env` just to write to a local spreadsheet. Without reexportation, `ExcelWriter` is testable in isolation.
 
-## 11. Excel status validation is a manual copy of the Jira workflow
+## 11. Excel status validation is a manual copy of the task source's workflow
 
 The validation dropdown on `BASE_TAREFAS.status` uses the list `Backlog, To
 Do, In Progress, Code Review, Testing, Done`, copied from the workflow
-configured in Jira on 2026-07-22.
+configured in Jira on 2026-07-22 — before the ClickUp migration (decision
+22). The list still documents that behavior, but is now copied from
+ClickUp's status workflow going forward.
 
 **Why:** unlike `tipo` (`TaskType`, an enum validated in
-`models/schemas.py`), `status` is free text coming straight from Jira; there
-is no Python-side enum for that column. A fixed list in code would run the
-same risk that already materialized with `tipo` (issue `QT-6`, with
-`task_type="Function"` outside the enum, was silently dropped from the
+`models/schemas.py`), `status` is free text coming straight from the task
+source; there is no Python-side enum for that column. A fixed list in code
+would run the same risk that already materialized with `tipo` (issue `QT-6`,
+with `task_type="Function"` outside the enum, was silently dropped from the
 report). That is why the status list does not live in code: it lives only
-in Excel's dropdown validation, and has to be copied by hand from Jira.
+in Excel's dropdown validation, and has to be copied by hand from the source.
 
 **Trade-off:** this validation only protects manual editing of the
 spreadsheet. The pipeline overwrites `status` on every run with the value
-straight from Jira, without going through Excel's validation, so a new Jira
-status shows up in the report even when it is not on the dropdown list, but
-editing the cell by hand with a value outside the list is blocked.
+straight from the task source, without going through Excel's validation, so
+a new status shows up in the report even when it is not on the dropdown
+list, but editing the cell by hand with a value outside the list is blocked.
 
-**Caution when touching this:** if the Jira workflow changes (a status
+**Caution when touching this:** if the status workflow changes (a status
 renamed, added, or removed), this list has to be updated by hand in Excel.
 There is no automatic sync between the two.
 
@@ -268,49 +270,51 @@ N:1. A text column on `funcionarios` would only hold one area per employee
 and would require duplicating the area name on every row, with no dimension
 to group by area later.
 
-## 18. Tasks missing from `JIRA_JQL` are archived by timestamp, not deleted
+## 18. Tasks missing from the ClickUp fetch are archived by timestamp, not deleted
 
-`PostgresClient.archive_missing_tasks` runs at the end of `sync_jira` and
+`PostgresClient.archive_missing_tasks` runs at the end of `sync_clickup` and
 sets `tarefas.arquivada_em = now()` on every row whose `task_id` didn't show
-up in the current run's fetch and that wasn't already archived; the row is
-never deleted.
+up in the current run's fetch (`ClickUpClient.fetch_tasks(CLICKUP_LIST_ID)`)
+and that wasn't already archived; the row is never deleted. Before the
+ClickUp migration (decision 22), this same logic ran at the end of
+`sync_jira` against `JIRA_JQL`.
 
 **Why:** follows the same philosophy as decision 8, never discard silently.
-A transient Jira failure or a misconfigured `JIRA_JQL` can make the returned
-issue list come back empty or incomplete; without timestamp archiving, a
-`DELETE` at that point would wipe out tasks that still exist in Jira, and
-the next successful `sync_jira` would have no way to recover what was lost.
-Marking with a timestamp instead of deleting keeps the problem visible and
-reversible.
+A transient ClickUp failure or a misconfigured `CLICKUP_LIST_ID` can make
+the returned task list come back empty or incomplete; without timestamp
+archiving, a `DELETE` at that point would wipe out tasks that still exist in
+ClickUp, and the next successful `sync_clickup` would have no way to
+recover what was lost. Marking with a timestamp instead of deleting keeps
+the problem visible and reversible.
 
 **Trade-off:** Caution when touching this: the set used to decide what to
-archive must be `all_ids_from_jira` (every issue key the raw Jira fetch
+archive must be `all_ids_from_clickup` (every `id` the raw ClickUp fetch
 returned, before any validation), not `valid_ids` (the tasks that already
-passed Pydantic validation, decision 8). Using `valid_ids` would archive an
-issue discarded by validation (an out-of-enum `priority`/`tipo`, for
-example) as if it had disappeared from Jira, even though it is still active
-there, conflating "didn't come back in this fetch" with "came back, but
-failed validation." That was, in fact, an early version's bug, fixed before
-it reached production.
+passed Pydantic validation, decision 8). Using `valid_ids` would archive a
+task discarded by validation (an out-of-enum `priority`, for example) as if
+it had disappeared from ClickUp, even though it is still active there,
+conflating "didn't come back in this fetch" with "came back, but failed
+validation." That was, in fact, an early version's bug (then named
+`all_ids_from_jira`), fixed before it reached production.
 
 ## 19. Archiving is also marked in the spreadsheet, in a column that only ever receives that one write
 
 `BASE_TAREFAS` gained an `arquivada_em` column, mirroring the column of the
 same name in `tarefas` (decision 18). `ExcelWriter.mark_archived_tasks` runs
-at the end of `sync_jira`, right after `archive_missing_tasks`, and fetches
+at the end of `sync_clickup`, right after `archive_missing_tasks`, and fetches
 the already-archived tasks through `PostgresClient.get_archived_tasks` to
 write the archive date into the spreadsheet.
 
 **Why:** before this change, an archived task was only flagged in Postgres;
 whoever opened the spreadsheet had no way to tell that a `BASE_TAREFAS` row
-belonged to a task that had already disappeared from Jira, short of
+belonged to a task that had already disappeared from ClickUp, short of
 querying the database directly. Writing the same flag into the spreadsheet
 makes that information visible to anyone working from Excel alone.
 
 **Trade-off:** `mark_archived_tasks` writes only the `arquivada_em` cell; it
 never calls `_write_task_row` or any other path that would rewrite
 `titulo`, `status`, `prazo`, or any other field on the row. This is
-deliberate: an archived task no longer receives updates from Jira, so its
+deliberate: an archived task no longer receives updates from ClickUp, so its
 other fields must stay frozen at the last real value they held before the
 task dropped out of the fetch, not get overwritten or cleared. If a
 `task_id` coming from Postgres has no matching row in `BASE_TAREFAS` (it
@@ -336,27 +340,89 @@ represents — erasing the very history the sheet is meant to keep. Writing
 the value at snapshot time is what makes the row a genuine historical
 record instead of one more view of the present.
 
-## 21. `EtlService._build_task` falls back to `EmployeeRegistry.get_jira_email` when Jira omits the assignee's email
+## 21. `EtlService._build_task` falls back to `EmployeeRegistry.get_registered_email` when the task source omits the assignee's email
 
-When `fields.assignee.emailAddress` comes back null but there is an
-actual assignee (`fields.assignee` is not `None`), `_build_task` first
-normalizes the Jira `displayName` to the canonical name via
+When an assignee actually exists but comes without an email, `_build_task`
+first normalizes the raw identifier (today ClickUp's `username`; it used to
+be Jira's `displayName`) to the canonical name via
 `normalize_employee_identifier`, and only then calls
-`EmployeeRegistry.get_jira_email` with that already-canonicalized name,
-never with the raw `displayName`. The fallback does not run on the
-no-assignee branch (`fields.assignee is None`), where `assignee` is the
-`NO_RESPONSIBLE` sentinel — calling `get_jira_email` with a sentinel as
-if it were a person's name makes no sense and must never happen.
+`EmployeeRegistry.get_registered_email` with that already-canonicalized
+name, never with the raw identifier. The fallback does not run on the
+no-assignee branch (an empty assignee list), where `assignee` is the
+`NO_RESPONSIBLE` sentinel — calling `get_registered_email` with a sentinel
+as if it were a person's name makes no sense and must never happen. The
+method was named `get_jira_email` until the ClickUp migration (decision
+22); it was renamed because it now resolves an employee's registered email
+regardless of the task source, not just Jira's.
 
-**Why:** Jira Cloud's per-user email-visibility privacy settings (a
-GDPR-era change) can leave `emailAddress` null even for an assignee that
-is correctly set and visible everywhere else in Jira — this is expected
-Jira behavior, not missing data on this project's side. Using the
-already-canonicalized name instead of Jira's raw `displayName` is
-essential: names registered in `DIM_FUNCIONARIO` can differ from the
-`displayName` Jira returns, and that exact mismatch caused an earlier
-bug involving an employee named "Miguel Felix Cardozo de Tomy" —
+**Why:** per-user email-visibility privacy settings — a GDPR-era change on
+Jira Cloud, an equivalent possibility on ClickUp — can leave the assignee's
+email null even for someone correctly assigned and visible everywhere else
+in the tool. Using the already-canonicalized name instead of the source's
+raw identifier is essential: names registered in `DIM_FUNCIONARIO` can
+differ from what the task source returns, and that exact mismatch caused an
+earlier bug involving an employee named "Miguel Felix Cardozo de Tomy" —
 looking up the raw name here would hit the same problem. This makes the
 employee registry (`DIM_FUNCIONARIO` / `EmployeeRegistry`) a second
 source of truth for an employee's email, specifically so outbound Teams
-@mentions still have one when Jira itself won't provide it.
+@mentions still have one when the task source itself won't provide it.
+
+## 22. The task source migrated from Jira to ClickUp only in the extraction layer; `Task` stayed the contract
+
+`clients/jira_client.py` was replaced by `clients/clickup_client.py`, and
+`EtlService._build_task`/`transform_details` were rewritten for ClickUp's
+shape (a list of assignees, `custom_fields` as a list, millisecond
+timestamps, and so on — see [`data-model.md`](data-model.md)). Clockify, the
+Excel output, the Postgres output, Teams alerts, employee identity
+resolution, and task archiving stayed exactly as they were: none of those
+modules knew Jira directly, only `Task` (`models/schemas.py`), and `Task`
+did not change.
+
+**Why:** the project switched task-management tools, but the Postgres
+schema, the spreadsheet's formulas and tabs, and the Teams alert flows have
+no reason to change because of that — they are all consumers of the `Task`
+model, not of the source API. Keeping `Task` intact (the single most
+important decision of this migration) turned a vendor swap into a change
+contained to the extraction layer: only the HTTP client and the dict→`Task`
+mapping needed rewriting. This confirms, in practice, the design described
+in the [architecture](architecture.md#layers) decision: "no client knows
+about `ExcelWriter`, and `ExcelWriter` doesn't know about Jira" — now reads
+the same with "Jira" swapped for "ClickUp".
+
+Identifiers that are **data**, not code — the `funcionarios.jira_email`
+column in Postgres, the `jira_email` header on the Excel `DIM_FUNCIONARIO`
+tab, and the `EmployeeMapping.jira_email` field that mirrors both — were
+deliberately kept under their old name, for the same reason as decision 6:
+renaming them would break the runtime match against the schema already
+deployed in Supabase and against the real spreadsheet, with no import error
+to warn about it. Only the `EmployeeRegistry.get_jira_email` method was
+renamed (decision 21), because it is code, not data.
+
+**Multiple assignees, and the @mention trade-off:** unlike Jira, ClickUp
+allows more than one assignee per task. Each assignee is normalized
+individually and the canonical names are joined into `Task.assignee`
+(`"Nicolas Delecrode, Daniel Nogueira"`), a call made by the project owner.
+But `Task.assignee_email` is still a single email — it feeds one Teams
+@mention, and an @mention can't target several people at once — so only the
+**first** assignee's email is used. A task with multiple assignees always
+notifies only the first one by email; the rest still show up in the report
+(the spreadsheet's `responsavel` column and `tarefas` in Postgres) but don't
+get a direct @mention.
+
+**The `task_type` trade-off:** ClickUp has no direct equivalent of Jira's
+`issuetype` — the only candidate, `custom_item_id`, only exists when the
+workspace uses ClickUp's paid Custom Task Types feature, which this
+workspace does not. Since `Task.task_type` is a required field and `Task`
+couldn't change, every task from ClickUp gets a fixed `TaskType.TASK`, a
+call made by the project owner. This means the report loses the
+Bug/Story/Epic/Subtask distinction Jira used to provide; if the workspace
+ever adopts Custom Task Types, `_build_task` will need revisiting to map
+`custom_item_id` instead of using the fixed value.
+
+**The null-priority trade-off:** ClickUp represents "no priority" as
+`priority: null` in the payload (instead of Jira's object with an absent
+`name`). The mapping (`urgent`→Highest, `high`→High, `normal`→Medium,
+`low`→Low) only applies when `priority` isn't null; when it is,
+`Task.priority` is left unset and Pydantic validation fails, discarding the
+task through the same path that already existed (decision 8) — the same
+behavior a priority-less Jira issue always had.

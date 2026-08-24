@@ -21,7 +21,7 @@ class Notifier:
         """Pick the webhook that serves a given area.
 
         Args:
-            area: Lowercase area name coming from the Jira custom field.
+            area: Lowercase area name coming from the ClickUp custom field.
 
         Returns:
             str: The area's webhook URL, or the fallback webhook when the area is

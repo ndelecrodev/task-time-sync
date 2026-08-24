@@ -2,7 +2,7 @@
 
 # Task Time Sync
 
-Pipeline em Python que consolida **Jira** (tarefas) e **Clockify** (horas
+Pipeline em Python que consolida **ClickUp** (tarefas) e **Clockify** (horas
 apontadas) em uma planilha Excel hospedada no **Backblaze B2** e em um schema
 **Postgres** hospedado no **Supabase**, e avisa o time no **Microsoft Teams**
 sobre tarefas com prazo próximo do vencimento.
@@ -38,10 +38,11 @@ disponível em https://ndelecrodev.github.io/task-time-sync-docs/
                            │ upsert_employee
                            ▼           │
    ┌──────────┐      ┌───────────────┐│
-   │ Jira API ├─────▶│               ││
-   └──────────┘      │  EtlService   │◀┴── registro de colaboradores
-   ┌──────────┐      │ (valida +     │
-   │ Clockify ├─────▶│  normaliza)   │
+   │ ClickUp  ├─────▶│               ││
+   │   API    │      │  EtlService   │◀┴── registro de colaboradores
+   └──────────┘      │ (valida +     │
+   ┌──────────┐      │  normaliza)   │
+   │ Clockify ├─────▶│               │
    └──────────┘      └───────┬───────┘
                              │ Task / TimeEntry / TaskDetail
                       ┌──────┴───────┐
@@ -66,7 +67,7 @@ desviadas para a aba `DUPLICADOS_REMOVIDOS` em vez de sobrescrever o cadastro
 existente. A tabela `funcionarios` também guarda `photo_url`, a foto do
 colaborador consumida pelo dashboard de indicadores. Só depois da
 sincronização `EtlService` carrega o registro já sincronizado para normalizar
-responsáveis do Jira e colaboradores do Clockify para um nome canônico comum.
+responsáveis do ClickUp e colaboradores do Clockify para um nome canônico comum.
 
 Detalhes em [`docs/architecture.md`](docs/architecture.md),
 [`docs/data-model.md`](docs/data-model.md) e
@@ -79,8 +80,8 @@ Detalhes em [`docs/architecture.md`](docs/architecture.md),
 | Caminho | Responsabilidade |
 |---|---|
 | `main.py` | Entrypoint fino; só chama `sop_pipeline.pipeline.run()`. |
-| `src/sop_pipeline/pipeline.py` | Orquestra a execução: download → sync de colaboradores → sync Jira/Clockify → upload → alertas. |
-| `src/sop_pipeline/clients/` | Clientes das fontes externas: `JiraClient` e `ClockifyClient` (HTTP, sem regra de negócio) e `PostgresClient` (upserts no schema Supabase). |
+| `src/sop_pipeline/pipeline.py` | Orquestra a execução: download → sync de colaboradores → sync ClickUp/Clockify → upload → alertas. |
+| `src/sop_pipeline/clients/` | Clientes das fontes externas: `ClickUpClient` e `ClockifyClient` (HTTP, sem regra de negócio) e `PostgresClient` (upserts no schema Supabase). |
 | `src/sop_pipeline/services/` | Regra de negócio: `EtlService` (transformação/validação), `AlertService` (quem merece alerta) e `EmployeeSyncService` (sincroniza `DIM_FUNCIONARIO` com o Postgres). |
 | `src/sop_pipeline/integrations/` | Leitura e escrita da planilha e de sistemas externos: `ExcelReader`, `ExcelWriter`, `excel_workbook.py`/`excel_table_helpers.py` (helpers de abertura e de tabela), `Notifier` (Teams), `StorageClient` (B2). |
 | `src/sop_pipeline/models/` | Modelos Pydantic (`Task`, `TimeEntry`, `TaskDetail`) e enums. |
@@ -126,15 +127,15 @@ cp .env.example .env    # Windows: copy .env.example .env
 ```
 
 O `.env` **nunca** é versionado (está no `.gitignore`). Todo segredo do projeto
-— token do Jira, chave do Clockify, webhooks do Teams, credenciais do B2 — vem de
-lá; nada fica escrito no código.
+— token do ClickUp, chave do Clockify, webhooks do Teams, credenciais do B2 — vem
+de lá; nada fica escrito no código.
 
 As variáveis estão agrupadas por serviço dentro do `.env.example`, cada uma com um
 comentário explicando onde obter o valor. Resumo:
 
 | Grupo | Variáveis |
 |---|---|
-| Jira | `JIRA_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`, `JIRA_JQL`, `JIRA_CUSTOMFIELD_AREA` |
+| ClickUp | `CLICKUP_API_TOKEN`, `CLICKUP_TEAM_ID`, `CLICKUP_LIST_ID`, `CLICKUP_AREA_FIELD_ID` |
 | Clockify | `API_KEY_CLOCKIFY`, `WORKSPACE_ID`, `WORKSPACE_NAME` |
 | Postgres / Supabase | `DATABASE_URL` |
 | Regras de alerta | `ALERT_DAYS_LOW`, `ALERT_DAYS_MEDIUM`, `ALERT_DAYS_HIGH`, `HIGH_PRIORITIES`, `LOW_PRIORITIES` |
@@ -165,22 +166,19 @@ e deve apontar para o **transaction pooler** do Supabase (porta `6543`), não pa
 a conexão direta: o pooler suporta IPv4, enquanto a conexão direta do Supabase só
 responde em IPv6, o que quebra em redes e provedores sem suporte a IPv6.
 
-### A consulta JQL (`JIRA_JQL`)
+### Os identificadores do ClickUp (`CLICKUP_TEAM_ID`, `CLICKUP_LIST_ID`, `CLICKUP_AREA_FIELD_ID`)
 
-A variável `JIRA_JQL` define **quais issues o pipeline busca no Jira**. É uma
-consulta JQL comum, no mesmo formato usado na busca avançada do Jira:
+`CLICKUP_LIST_ID` define **de qual List do ClickUp o pipeline busca tarefas**: o
+`ClickUpClient` chama `GET /list/{list_id}/task` e pagina o resultado até o fim,
+sempre com `include_closed=true` (para que tarefas concluídas continuem
+aparecendo na contagem de concluídas) e `subtasks=true` (para que subtarefas
+voltem como tarefas próprias, do mesmo jeito que uma issue do tipo Sub-task do
+Jira aparecia na mesma busca). `CLICKUP_TEAM_ID` identifica o Team (Workspace) do
+ClickUp e `CLICKUP_AREA_FIELD_ID` é o ID do campo customizado "Area" (tipo
+`drop_down`) usado para rotear os alertas do Teams.
 
-```
-JIRA_JQL="project = SEUPROJETO ORDER BY created DESC"
-```
-
-O `JiraClient` envia essa string para o endpoint de busca e pagina o resultado até
-o fim, então qualquer filtro válido de JQL funciona — por status, por responsável,
-por data de atualização, etc.
-
-O **valor real fica apenas no `.env` local** e não é publicado neste repositório,
-porque a query contém o identificador do projeto Jira, que não deve ser público. O
-`.env.example` traz apenas o formato genérico acima.
+O **valor real desses IDs fica apenas no `.env` local** e não é publicado neste
+repositório. O `.env.example` traz apenas placeholders vazios.
 
 ---
 
@@ -206,14 +204,14 @@ Uma execução completa:
 
 1. baixa a planilha do bucket B2 para o caminho de `TEMP_EXCEL_PATH`;
 2. sincroniza `DIM_FUNCIONARIO` com a tabela `funcionarios` no Postgres;
-3. busca as issues do Jira e grava tarefas, etiquetas e descrições na planilha e no Postgres;
+3. busca as tarefas do ClickUp e grava tarefas, etiquetas e descrições na planilha e no Postgres;
 4. busca as horas de todos os usuários do Clockify e grava os apontamentos na planilha e no Postgres;
 5. sobe a planilha atualizada de volta para o bucket;
 6. envia os alertas de prazo para os canais do Teams;
 7. dispara o heartbeat do Better Stack, confirmando que a execução terminou.
 
-As etapas 3, 4 e 6 são isoladas entre si: se o Jira estiver fora do ar, as horas do
-Clockify ainda são coletadas. Falhas são logadas e enviadas ao Sentry.
+As etapas 3, 4 e 6 são isoladas entre si: se o ClickUp estiver fora do ar, as horas
+do Clockify ainda são coletadas. Falhas são logadas e enviadas ao Sentry.
 
 > A execução mexe em dados reais (bucket, planilha e canais do Teams). Para testar
 > mudanças sem efeito colateral, trabalhe sobre uma cópia local da planilha.
@@ -248,7 +246,7 @@ O repositório usa duas GitHub Actions, definidas em `.github/workflows/`:
   horário de Brasília), além de poder ser disparado manualmente pela aba Actions
   do GitHub (`workflow_dispatch`).
 
-As credenciais que o pipeline usa em produção (Jira, Clockify, Postgres, B2,
+As credenciais que o pipeline usa em produção (ClickUp, Clockify, Postgres, B2,
 Teams, observabilidade) estão configuradas como *secrets* do repositório no
 GitHub Actions, não no `.env` do runner.
 
