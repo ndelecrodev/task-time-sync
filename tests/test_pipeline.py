@@ -10,7 +10,37 @@ from unittest.mock import MagicMock, patch
 
 from sqlalchemy.exc import SQLAlchemyError
 
-from sop_pipeline.pipeline import sync_clickup, sync_clockify
+from sop_pipeline.pipeline import _filter_allowed_folders, sync_clickup, sync_clockify
+
+# --- _filter_allowed_folders -------------------------------------------------------
+
+
+def test_filter_allowed_folders_keeps_task_from_allowed_folder(make_clickup_task) -> None:
+    """A task whose folder id is on the CLICKUP_FOLDER_IDS allowlist passes through."""
+    task = make_clickup_task()
+
+    result = _filter_allowed_folders([task])
+
+    assert result == [task]
+
+
+def test_filter_allowed_folders_excludes_task_from_disallowed_folder(make_clickup_task) -> None:
+    """A task from a folder NOT on the allowlist is excluded before _build_task ever sees it."""
+    task = make_clickup_task(folder={"id": "some-other-folder", "name": "Not A Turma"})
+
+    result = _filter_allowed_folders([task])
+
+    assert result == []
+
+
+def test_filter_allowed_folders_excludes_task_missing_folder(make_clickup_task) -> None:
+    """A task with no folder key at all is excluded rather than raising."""
+    task = make_clickup_task()
+    del task["folder"]
+
+    result = _filter_allowed_folders([task])
+
+    assert result == []
 
 
 def test_sync_clickup_does_not_write_detail_for_discarded_task(

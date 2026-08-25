@@ -65,6 +65,7 @@ class Task(BaseModel):
         update_date: Date of the last update.
         assignee_email: Assignee e-mail, forwarded in the Teams alert.
         tags: Jira labels attached to the issue.
+        turma: Name of the ClickUp folder ("turma") the task belongs to.
     """
 
     task_id: str
@@ -81,6 +82,7 @@ class Task(BaseModel):
     update_date: date | None = None
     assignee_email: EmailStr | None = None
     tags: list[str] = Field(default_factory=list)
+    turma: str
 
     @computed_field
     @property

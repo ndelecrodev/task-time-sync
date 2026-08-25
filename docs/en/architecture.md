@@ -27,8 +27,12 @@ An execution (`sop_pipeline.pipeline.run`) is a linear sequence with three isola
     PostgresClient.upsert_area_and_link ─▶ areas, funcionario_area tables (Postgres/Supabase)
 
  3. sync_clickup
-    ClickUpClient.fetch_tasks(CLICKUP_LIST_ID) ── pagination by page number
-        │  raw list[dict]
+    ClickUpClient.fetch_tasks(CLICKUP_TEAM_ID, CLICKUP_SPACE_ID) ── pagination by
+                               page number, GET /team/{team_id}/task
+        │  raw list[dict] (every task in the Space, from any folder)
+        ▼
+    pipeline._filter_allowed_folders
+        │  drops tasks whose folder.id isn't in CLICKUP_FOLDER_IDS
         ▼
     EtlService.transform_tasks    ─▶ list[Task]
     EtlService.transform_details  ─▶ list[TaskDetail]
@@ -40,7 +44,7 @@ An execution (`sop_pipeline.pipeline.run`) is a linear sequence with three isola
     PostgresClient.upsert_task / upsert_task_detail / upsert_tag_and_link
                                ─▶ tarefas, detalhes_tarefa, etiquetas, tarefa_etiqueta tables
     PostgresClient.archive_missing_tasks
-                               ─▶ marks tarefas.arquivada_em on tasks missing from CLICKUP_LIST_ID (never deletes)
+                               ─▶ marks tarefas.arquivada_em on tasks missing from the fetch (never deletes)
 
  4. sync_clockify
     ClockifyClient.list_users
@@ -78,8 +82,8 @@ sheet_name, table_name)`, which holds the logic for opening the workbook, findin
 the table, and building the list of row dicts. Each wrapper only fixes the sheet
 and table name it reads.
 
-Tasks that disappear from the `CLICKUP_LIST_ID` result (closed out of scope,
-moved, deleted) are not removed from Postgres: `PostgresClient.archive_missing_tasks`
+Tasks that disappear from the configured Space/folders result (closed out of
+scope, moved, deleted) are not removed from Postgres: `PostgresClient.archive_missing_tasks`
 stamps `tarefas.arquivada_em` with the current run's timestamp on every row
 whose `task_id` didn't come back in the fetch, keeping the full history instead
 of deleting it.

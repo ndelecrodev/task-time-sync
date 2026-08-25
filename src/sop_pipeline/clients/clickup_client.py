@@ -8,7 +8,7 @@ from sop_pipeline.config.settings import settings
 
 
 class ClickUpPage(NamedTuple):
-    """One page of results from the ClickUp list-tasks endpoint.
+    """One page of results from the ClickUp team-tasks endpoint.
 
     Attributes:
         tasks: Raw task dicts returned by the API.
@@ -29,9 +29,12 @@ class ClickUpClient:
         self.session.headers.update({"Authorization": settings.CLICKUP_API_TOKEN})
 
     @staticmethod
-    def _build_params(page: int) -> dict:
-        """Assemble the query string for a list-tasks request.
+    def _build_params(space_id: str, page: int) -> dict:
+        """Assemble the query string for a team-tasks request.
 
+        Scoping is done by ``space_ids[]`` rather than a list ID, since tasks are
+        now fetched for a whole Space and narrowed down to specific folders
+        ("turmas") afterwards, not for a single ClickUp List.
         ``include_closed`` is always set so completed tasks are still returned —
         the pipeline needs them for the "concluidas" count. ``subtasks`` is always
         set so subtasks come back as their own task rows alongside regular tasks,
@@ -39,6 +42,7 @@ class ClickUpClient:
         search as everything else.
 
         Args:
+            space_id: The ClickUp Space to scope the search to.
             page: The 0-based page number to request.
 
         Returns:
@@ -46,15 +50,16 @@ class ClickUpClient:
         """
         return {
             "page": page,
+            "space_ids[]": space_id,
             "include_closed": "true",
             "subtasks": "true",
         }
 
-    def _fetch_page(self, list_id: str, params: dict) -> ClickUpPage:
-        """Request a single page of tasks from a list.
+    def _fetch_page(self, team_id: str, params: dict) -> ClickUpPage:
+        """Request a single page of tasks for a team (workspace).
 
         Args:
-            list_id: The ClickUp list to fetch tasks from.
+            team_id: The ClickUp Team (Workspace) to fetch tasks from.
             params: Query parameters built by :meth:`_build_params`.
 
         Returns:
@@ -64,7 +69,7 @@ class ClickUpClient:
             requests.HTTPError: If ClickUp answers with a non-2xx status.
         """
         resp = self.session.get(
-            url=f"{self.base_url}/list/{list_id}/task",
+            url=f"{self.base_url}/team/{team_id}/task",
             params=params,
             timeout=10,
         )
@@ -72,11 +77,18 @@ class ClickUpClient:
         data = resp.json()
         return ClickUpPage(tasks=data["tasks"], is_last=data["last_page"])
 
-    def fetch_tasks(self, list_id: str) -> list[dict]:
-        """Fetch every task in a list, following all pages.
+    def fetch_tasks(self, team_id: str, space_id: str) -> list[dict]:
+        """Fetch every task in a Space, following all pages.
+
+        Tasks come back from every folder (and folderless list) in the Space;
+        narrowing that down to the folders that count as "turmas" is the
+        caller's job (see ``pipeline._filter_allowed_folders``), not this
+        client's — a client stays a thin HTTP wrapper that returns raw dicts
+        without interpreting anything.
 
         Args:
-            list_id: The ClickUp list to fetch tasks from.
+            team_id: The ClickUp Team (Workspace) to fetch tasks from.
+            space_id: The ClickUp Space to scope the search to.
 
         Returns:
             list[dict]: Raw task dicts, in the order ClickUp returned them.
@@ -88,8 +100,8 @@ class ClickUpClient:
         page = 0
 
         while True:
-            params = self._build_params(page)
-            result = self._fetch_page(list_id=list_id, params=params)
+            params = self._build_params(space_id, page)
+            result = self._fetch_page(team_id=team_id, params=params)
             tasks.extend(result.tasks)
             if result.is_last:
                 break

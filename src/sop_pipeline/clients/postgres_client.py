@@ -76,6 +76,7 @@ class Tarefas(Base):
     criador = Column(String, nullable=False)
     data_atualizacao = Column(Date, nullable=False)
     arquivada_em = Column(DateTime(timezone=True), nullable=True)
+    turma = Column(String, nullable=False)
 
 
 class DetalhesTarefa(Base):
@@ -236,6 +237,7 @@ class PostgresClient:
                         tipo=task.task_type,
                         criador=task.creator,
                         data_atualizacao=task.update_date,
+                        turma=task.turma,
                     )
                 )
             else:
@@ -251,6 +253,7 @@ class PostgresClient:
                 result.tipo = task.task_type
                 result.criador = task.creator
                 result.data_atualizacao = task.update_date
+                result.turma = task.turma
 
             session.commit()
 

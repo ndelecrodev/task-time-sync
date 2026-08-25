@@ -28,8 +28,12 @@ de sincronização isoladas entre si.
     PostgresClient.upsert_area_and_link ─▶ tabelas areas, funcionario_area (Postgres/Supabase)
 
  3. sync_clickup
-    ClickUpClient.fetch_tasks(CLICKUP_LIST_ID) ── paginação por número de página
-        │  list[dict] cru
+    ClickUpClient.fetch_tasks(CLICKUP_TEAM_ID, CLICKUP_SPACE_ID) ── paginação por
+                               número de página, GET /team/{team_id}/task
+        │  list[dict] cru (toda tarefa do Space, de qualquer pasta)
+        ▼
+    pipeline._filter_allowed_folders
+        │  descarta tarefas cuja folder.id não está em CLICKUP_FOLDER_IDS
         ▼
     EtlService.transform_tasks    ─▶ list[Task]
     EtlService.transform_details  ─▶ list[TaskDetail]
@@ -41,7 +45,7 @@ de sincronização isoladas entre si.
     PostgresClient.upsert_task / upsert_task_detail / upsert_tag_and_link
                                ─▶ tabelas tarefas, detalhes_tarefa, etiquetas, tarefa_etiqueta
     PostgresClient.archive_missing_tasks
-                               ─▶ marca tarefas.arquivada_em nas tarefas que sumiram da CLICKUP_LIST_ID (nunca apaga)
+                               ─▶ marca tarefas.arquivada_em nas tarefas que sumiram da busca (nunca apaga)
 
  4. sync_clockify
     ClockifyClient.list_users
@@ -78,8 +82,8 @@ sheet_name, table_name)`, que concentra a lógica de abrir o workbook, achar a
 tabela e montar a lista de dicts por linha. Cada wrapper só fixa o nome da aba e
 da tabela que lê.
 
-Tarefas que somem do resultado da busca à `CLICKUP_LIST_ID` (fechadas fora do
-escopo, movidas, apagadas) não são removidas do Postgres:
+Tarefas que somem do resultado da busca ao Space/pastas configurados (fechadas
+fora do escopo, movidas, apagadas) não são removidas do Postgres:
 `PostgresClient.archive_missing_tasks` marca `tarefas.arquivada_em` com o
 timestamp da execução atual em toda linha cujo `task_id` não veio na busca,
 mantendo o histórico completo em vez de apagar.
