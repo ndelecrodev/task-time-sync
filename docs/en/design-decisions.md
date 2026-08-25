@@ -483,3 +483,41 @@ syncing it requires a manual action: someone has to add the new folder's ID
 to `CLICKUP_FOLDER_IDS` and let the scheduled run pick it up. There's no
 automatic discovery of new turmas. That friction is deliberate — it's the
 price of never including a folder by accident.
+
+## 24. `area` moved from a manually-filled `drop_down` custom field to a fixed ClickUp-list mapping
+
+Previously, `area` came from a ClickUp `drop_down` custom field
+(`CLICKUP_AREA_FIELD_ID`), filled in per task by whoever created or managed
+it. That mechanism was removed entirely: `_build_task` now reads
+`task["list"]["id"]` and resolves it against `EtlService.CLICKUP_LIST_TO_AREA`,
+a fixed dict with one entry per ClickUp list that represents a course subject
+(e.g. `"901715802295": "front-end"` for the "Desenvolvimento 1" list). When a
+list's `id` isn't in the dict, the result is `NO_AREA`, the same sentinel
+previously used for the unfilled field.
+
+**Why:** the custom field depended on someone remembering to fill it in on
+every task, and in practice almost nobody did — the overwhelming majority of
+tasks reached the report as `NO_AREA`, defeating the point of having a
+per-task area at all. The ClickUp list a task already lives in, by contrast,
+maps 1:1 onto a course subject and is data the task already carries regardless
+— it needs no extra per-task human action. Moving area resolution onto that
+data removes the source of the problem instead of reminding people to fill in
+a field.
+
+Why a fixed Python dict rather than an `.env` setting, unlike
+`CLICKUP_FOLDER_IDS`: `CLICKUP_LIST_TO_AREA` is a curriculum/business rule
+tied to this specific program's list structure — which lists exist and which
+subject each maps to changes about as rarely as the curriculum itself, and is
+part of the pipeline's business logic, not a credential or an
+environment-varying scope. `CLICKUP_FOLDER_IDS` stays in `.env` because,
+unlike this, it genuinely varies by what's being synced (which turmas are
+currently active), which is exactly what an environment variable exists to
+capture.
+
+**Trade-off:** the same category of deliberate friction as decision 23. A new
+list created in an already-allowed folder, without a matching entry in
+`CLICKUP_LIST_TO_AREA`, silently falls back to `NO_AREA` until someone updates
+the dict. There's no automatic area discovery from the list's name or any
+other signal — updating the mapping is a manual, conscious act, the same way
+the folder allowlist works: changing what the pipeline recognizes should be
+deliberate, not a side effect of a new list showing up in ClickUp.

@@ -58,7 +58,7 @@ A normalized ClickUp task. Upsert key: `task_id` (ClickUp's `id`).
 | `assignee` | `str` | `assignees[*].username`/`.email`, each normalized individually and joined with `", "` |
 | `priority` | `Priority` | `priority.priority` (`urgent`/`high`/`normal`/`low`), mapped onto the enum |
 | `status` | `str` | `status.status` |
-| `area` | `str \| None` | resolved option of the `drop_down` custom field configured in `CLICKUP_AREA_FIELD_ID` |
+| `area` | `str \| None` | `list.id` resolved against the fixed `EtlService.CLICKUP_LIST_TO_AREA` mapping |
 | `creation_date` | `date` | `date_created` (millisecond timestamp) |
 | `due_date` | `date \| None` | `due_date` (millisecond timestamp) |
 | `completion_date` | `date \| None` | `date_closed` (millisecond timestamp) |
@@ -76,13 +76,13 @@ names are joined into `assignee`. Only the **first** assignee's email feeds
 `assignee_email`, because a Teams @mention can only target one person — see
 [`design-decisions.md`](design-decisions.md#22).
 
-**Area (`drop_down` custom field):** ClickUp returns `custom_fields` as a list
-of field objects, each with `id`, `name`, `type`, and optionally `value`. For
-the `drop_down` field configured in `CLICKUP_AREA_FIELD_ID`, `value` is an
-**index** into that field's own `type_config.options` array, not the option's
-text — the index is resolved against that array to get the area name. When
-the field is absent, has no `value` key, or the index doesn't resolve, the
-result is `NO_AREA`.
+**Area (ClickUp list mapping):** `area` comes from `task["list"]["id"]`,
+resolved against the fixed `EtlService.CLICKUP_LIST_TO_AREA` dict (list_id ->
+area), with exactly one entry per ClickUp list that represents a course
+subject. When the list's `id` isn't in the dict — e.g. a new list created in
+an already-allowed folder but never assigned an area yet — the result is
+`NO_AREA`, the same sentinel previously used for an unfilled custom field. See
+[`design-decisions.md`](design-decisions.md#24).
 
 **Milliseconds:** `date_created`, `due_date`, `date_closed`, and
 `date_updated` arrive as millisecond Unix-timestamp strings (e.g.
