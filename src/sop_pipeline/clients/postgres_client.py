@@ -35,11 +35,11 @@ class Funcionarios(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     canonical_name = Column(String(100), nullable=False)
-    jira_email = Column(
+    clickup_email = Column(
         String(150),
         CheckConstraint(
-            r"jira_email ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'",
-            name="check_email_jira",
+            r"clickup_email ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'",
+            name="check_email_clickup",
         ),
         nullable=False,
     )
@@ -55,7 +55,7 @@ class Funcionarios(Base):
 
 
 class Tarefas(Base):
-    """A Jira issue, mirrors the ``tarefas`` table."""
+    """A task, mirrors the ``tarefas`` table."""
 
     __tablename__ = "tarefas"
 
@@ -76,6 +76,7 @@ class Tarefas(Base):
     criador = Column(String, nullable=False)
     data_atualizacao = Column(Date, nullable=False)
     arquivada_em = Column(DateTime(timezone=True), nullable=True)
+    turma = Column(String, nullable=False)
 
 
 class DetalhesTarefa(Base):
@@ -172,13 +173,14 @@ class PostgresClient:
             return result.all()
 
     def upsert_employee(
-        self, canonical_name: str, jira_email: str, clockify_email: str, photo_url: str | None
+        self, canonical_name: str, clickup_email: str, clockify_email: str, photo_url: str | None
     ) -> None:
         """Insert or update an employee, matched by either email address.
 
         Args:
             canonical_name: The normalized name used as the join key.
-            jira_email: The email address that appears in Jira.
+            clickup_email: The registered email address, matched against
+                ClickUp assignees.
             clockify_email: The email address that appears in Clockify.
             photo_url: Public Supabase Storage URL for the employee's photo,
                 or ``None`` when no photo has been uploaded yet.
@@ -186,7 +188,7 @@ class PostgresClient:
         with Session(self.engine) as session:
             existing = session.scalars(
                 select(Funcionarios).where(
-                    (Funcionarios.jira_email == jira_email)
+                    (Funcionarios.clickup_email == clickup_email)
                     | (Funcionarios.clockify_email == clockify_email)
                 )
             ).first()
@@ -195,21 +197,21 @@ class PostgresClient:
                 session.add(
                     Funcionarios(
                         canonical_name=canonical_name,
-                        jira_email=jira_email,
+                        clickup_email=clickup_email,
                         clockify_email=clockify_email,
                         photo_url=photo_url,
                     )
                 )
             else:
                 existing.canonical_name = canonical_name
-                existing.jira_email = jira_email
+                existing.clickup_email = clickup_email
                 existing.clockify_email = clockify_email
                 existing.photo_url = photo_url
 
             session.commit()
 
     def upsert_task(self, task: Task, responsavel_id: int | None) -> None:
-        """Insert or update a task, matched by its Jira issue key.
+        """Insert or update a task, matched by its task ID.
 
         Args:
             task: The task to persist.
@@ -234,6 +236,7 @@ class PostgresClient:
                         tipo=task.task_type,
                         criador=task.creator,
                         data_atualizacao=task.update_date,
+                        turma=task.turma,
                     )
                 )
             else:
@@ -249,14 +252,15 @@ class PostgresClient:
                 result.tipo = task.task_type
                 result.criador = task.creator
                 result.data_atualizacao = task.update_date
+                result.turma = task.turma
 
             session.commit()
 
     def upsert_task_detail(self, task_id: str, descricao: str | None) -> None:
-        """Insert or update a task's description, matched by its Jira issue key.
+        """Insert or update a task's description, matched by its task ID.
 
         Args:
-            task_id: Jira issue key; the upsert key.
+            task_id: Task ID; the upsert key.
             descricao: Flattened plain-text description, or ``None`` when empty.
         """
         with Session(self.engine) as session:
@@ -305,7 +309,7 @@ class PostgresClient:
         recorded, since a task can be synced more than once.
 
         Args:
-            task_id: Jira issue key.
+            task_id: Task ID.
             tag_name: The tag name to resolve or create.
         """
         with Session(self.engine) as session:
@@ -359,7 +363,7 @@ class PostgresClient:
         """Mark as archived every active task not present in the latest sync.
 
         Args:
-            seen_task_ids: Every task_id returned by this run's Jira fetch.
+            seen_task_ids: Every task_id returned by this run's ClickUp fetch.
         """
         with Session(self.engine) as session:
             stmt = (

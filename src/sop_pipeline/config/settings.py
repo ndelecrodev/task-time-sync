@@ -6,9 +6,10 @@ single ready-to-use :data:`settings` instance.
 """
 
 from logging import getLogger
+from typing import Annotated
 
-from pydantic import Field
-from pydantic_settings import BaseSettings
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, NoDecode
 from sqlalchemy import create_engine
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -29,9 +30,10 @@ class Settings(BaseSettings):
     # Tells pydantic-settings where to look for the environment variables.
     model_config = {"env_file": ".env"}
 
-    JIRA_URL: str
-    JIRA_EMAIL: str
-    JIRA_API_TOKEN: str
+    CLICKUP_API_TOKEN: str
+    CLICKUP_TEAM_ID: str
+    CLICKUP_SPACE_ID: str
+    CLICKUP_FOLDER_IDS: Annotated[list[str], NoDecode]
     API_KEY_CLOCKIFY: str
     WORKSPACE_ID: str
     ALERT_DAYS_LOW: int = Field(
@@ -44,7 +46,7 @@ class Settings(BaseSettings):
         default=4, description="Days ahead that triggers a medium-priority alert"
     )
     WORKSPACE_NAME: str | None = None
-    JIRA_CUSTOMFIELD_AREA: str
+    CLICKUP_AREA_FIELD_ID: str
     WEBHOOK_TI: str
     WEBHOOK_SOP: str
     WEBHOOK_IA: str
@@ -60,13 +62,36 @@ class Settings(BaseSettings):
     B2_APPLICATION_KEY: str
     B2_KEY_ID: str
     TEMP_EXCEL_PATH: str = Field(default="planilha_temp.xlsx")
-    JIRA_JQL: str
     EXCEL_CLOUD_NAME: str
     SENTRY_DSN: str
     BETTERSTACK_HEARTBEAT_URL: str
     BETTERSTACK_SOURCE_TOKEN: str
     BETTERSTACK_INGESTING_HOST: str
     DATABASE_URL: str
+
+    @field_validator("CLICKUP_FOLDER_IDS", mode="before")
+    @classmethod
+    def _split_folder_ids(cls, value: str | list[str]) -> list[str]:
+        """Parse a comma-separated env var into a list of folder IDs.
+
+        Unlike ``HIGH_PRIORITIES``/``LOW_PRIORITIES``, which rely on
+        pydantic-settings' default JSON-list parsing (``["Highest", "High"]``),
+        this field takes the plainer ``"901710315702,901710321390"`` form, since
+        that is how the folder allowlist is meant to be pasted into ``.env``. The
+        field is annotated with ``NoDecode`` so pydantic-settings hands this
+        validator the raw string instead of trying (and failing) to JSON-decode
+        it first.
+
+        Args:
+            value: The raw ``.env`` string, or an already-parsed list (e.g. when
+                set programmatically in tests).
+
+        Returns:
+            list[str]: Folder IDs with surrounding whitespace stripped.
+        """
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return value
 
     def load_employee_registry(self) -> EmployeeRegistry:
         """Load and validate the employee registry from Postgres.
@@ -88,7 +113,7 @@ class Settings(BaseSettings):
         for employee in employees:
             mapping = EmployeeMapping(
                 canonical_name=employee.canonical_name,
-                jira_email=employee.jira_email,
+                clickup_email=employee.clickup_email,
                 clockify_email=employee.clockify_email,
             )
             mappings.append(mapping)
@@ -102,9 +127,9 @@ class Settings(BaseSettings):
         """Map an area name to the Teams webhook that serves it.
 
         The keys (other than the fallback) must match, in lowercase, the values
-        produced by the Jira "area" custom field — ``Notifier`` looks the area up
-        directly in this dict. ``"no area"`` is an internal fallback key and is
-        never compared against Jira data.
+        produced by the ClickUp "area" custom field — ``Notifier`` looks the area
+        up directly in this dict. ``"no area"`` is an internal fallback key and is
+        never compared against ClickUp data.
 
         Returns:
             dict[str, str]: Area name in lowercase mapped to its webhook URL.

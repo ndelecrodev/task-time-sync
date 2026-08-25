@@ -1,7 +1,8 @@
 """Orchestrates a full pipeline run.
 
-One run downloads the workbook from B2, refreshes it with Jira and Clockify data,
-uploads it back and notifies the team about tasks approaching their deadline.
+One run downloads the workbook from B2, refreshes it with ClickUp and Clockify
+data, uploads it back and notifies the team about tasks approaching their
+deadline.
 """
 
 from datetime import date
@@ -12,8 +13,8 @@ import sentry_sdk
 from logtail import LogtailHandler
 from sqlalchemy.exc import SQLAlchemyError
 
+from sop_pipeline.clients.clickup_client import ClickUpClient
 from sop_pipeline.clients.clockify_client import ClockifyClient
-from sop_pipeline.clients.jira_client import JiraClient
 from sop_pipeline.config.settings import settings, engine
 from sop_pipeline.errors.exceptions import ExcelWriteError
 from sop_pipeline.integrations.excel_writer import ExcelWriter
@@ -29,8 +30,38 @@ from sop_pipeline.services.employee_data_sync_service import EmployeeDataSyncSer
 logger = logging.getLogger(__name__)
 
 
-def sync_jira(etl: EtlService, postgres_client: PostgresClient, name_to_id: dict) -> list[Task]:
-    """Fetch Jira issues, transform them and write them to the spreadsheet.
+def _filter_allowed_folders(raw_tasks: list[dict]) -> list[dict]:
+    """Keep only tasks whose ClickUp folder is on the explicit allowlist.
+
+    ``ClickUpClient.fetch_tasks`` returns every task in the Space, across every
+    folder in it; this filter is what narrows that down to the folders that
+    actually represent a "turma". It runs here, in the orchestration layer,
+    rather than inside ``ClickUpClient``, because it is a business rule (which
+    folders count for this pipeline) rather than an HTTP/pagination concern —
+    clients in this codebase return raw dicts without interpreting anything
+    (see architecture.md).
+
+    A folder unrelated to a "turma" could be added to the Space later, and it
+    must not silently start flowing into the pipeline, alerts, and reports just
+    by existing there (see design-decisions.md). Adding a folder here is a
+    deliberate, one-line change a human makes to ``CLICKUP_FOLDER_IDS``.
+
+    Args:
+        raw_tasks: Task dicts as returned by ``ClickUpClient.fetch_tasks``.
+
+    Returns:
+        list[dict]: Only the tasks whose ``folder.id`` is in
+        ``settings.CLICKUP_FOLDER_IDS``.
+    """
+    return [
+        task
+        for task in raw_tasks
+        if (task.get("folder") or {}).get("id") in settings.CLICKUP_FOLDER_IDS
+    ]
+
+
+def sync_clickup(etl: EtlService, postgres_client: PostgresClient, name_to_id: dict) -> list[Task]:
+    """Fetch ClickUp tasks, transform them and write them to the spreadsheet.
 
     Args:
         etl: The transformation service.
@@ -40,13 +71,14 @@ def sync_jira(etl: EtlService, postgres_client: PostgresClient, name_to_id: dict
     Returns:
         list[Task]: The tasks that were persisted, reused later for alerting.
     """
-    client = JiraClient()
-    raw_issues = client.fetch_tasks(settings.JIRA_JQL)
+    client = ClickUpClient()
+    raw_tasks = client.fetch_tasks(settings.CLICKUP_TEAM_ID, settings.CLICKUP_SPACE_ID)
+    raw_tasks = _filter_allowed_folders(raw_tasks)
 
-    tasks = etl.transform_tasks(raw_issues)
-    details = etl.transform_details(raw_issues)
+    tasks = etl.transform_tasks(raw_tasks)
+    details = etl.transform_details(raw_tasks)
 
-    # transform_details runs over the raw, unfiltered issues, so an issue
+    # transform_details runs over the raw, unfiltered tasks, so a task
     # discarded by transform_tasks (e.g. an unmapped enum value) can still
     # produce a detail row here. Without this filter that detail row points
     # at a task_id that was never written to Postgres, and the FK on
@@ -74,21 +106,21 @@ def sync_jira(etl: EtlService, postgres_client: PostgresClient, name_to_id: dict
             logger.error("Failed to write detail %s to Postgres: %s", detail.task_id, error)
             sentry_sdk.capture_exception(error)
 
-    # Uses every issue key the Jira query returned, not just the ones that
-    # passed validation into `tasks` — a discarded issue (bad enum value,
-    # for example) is still present and active in Jira, so it must not be
+    # Uses every task id the ClickUp list returned, not just the ones that
+    # passed validation into `tasks` — a discarded task (bad enum value,
+    # for example) is still present and active in ClickUp, so it must not be
     # archived just because our own parsing rejected it.
-    all_ids_from_jira = {issue["key"] for issue in raw_issues}
-    postgres_client.archive_missing_tasks(all_ids_from_jira)
+    all_ids_from_clickup = {task["id"] for task in raw_tasks}
+    postgres_client.archive_missing_tasks(all_ids_from_clickup)
     ExcelWriter.mark_archived_tasks(settings.TEMP_EXCEL_PATH, postgres_client.get_archived_tasks())
 
-    # A discarded count well above zero means issues are vanishing from the
-    # report — usually a Jira priority or issue type missing from the enums.
+    # A discarded count well above zero means tasks are vanishing from the
+    # report — usually a priority ClickUp sent that isn't in the enum.
     logger.info(
-        "Jira: %s issues fetched, %s tasks written, %s discarded",
-        len(raw_issues),
+        "ClickUp: %s tasks fetched, %s tasks written, %s discarded",
+        len(raw_tasks),
         len(tasks),
-        len(raw_issues) - len(tasks),
+        len(raw_tasks) - len(tasks),
     )
     return tasks
 
@@ -171,7 +203,7 @@ def _configure_observability() -> None:
 def run() -> None:
     """Execute one full pipeline run.
 
-    The three sync steps are isolated from each other: a Jira outage must not
+    The three sync steps are isolated from each other: a ClickUp outage must not
     stop the Clockify hours from being collected, so each step logs and reports
     its own failure instead of aborting the run.
     """
@@ -193,14 +225,14 @@ def run() -> None:
 
     etl = EtlService()
 
-    # None means "the Jira sync did not complete", which is different from "Jira
-    # returned no tasks". Without the distinction a failed sync would silently
-    # run the alert step against an empty list and look like a clean run.
+    # None means "the ClickUp sync did not complete", which is different from
+    # "ClickUp returned no tasks". Without the distinction a failed sync would
+    # silently run the alert step against an empty list and look like a clean run.
     tasks: list[Task] | None = None
     try:
-        tasks = sync_jira(etl, postgres_client, name_to_id)
+        tasks = sync_clickup(etl, postgres_client, name_to_id)
     except Exception as error:  # pylint: disable=broad-except
-        logger.error("Jira synchronisation failed: %s", error)
+        logger.error("ClickUp synchronisation failed: %s", error)
         sentry_sdk.capture_exception(error)
 
     try:
@@ -210,7 +242,7 @@ def run() -> None:
         sentry_sdk.capture_exception(error)
 
     if tasks is None:
-        logger.warning("Skipping alerts: the Jira synchronisation did not complete")
+        logger.warning("Skipping alerts: the ClickUp synchronisation did not complete")
     else:
         total_tarefas = len(tasks)
         concluidas = 0

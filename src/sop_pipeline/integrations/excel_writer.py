@@ -42,6 +42,7 @@ TASK_COLUMN_MAP = {
     "tipo": "task_type",
     "criador": "creator",
     "data_atualizacao": "update_date",
+    "turma": "turma",
 }
 
 # Columns owned by Excel formulas, not by Python. Kept out of TASK_COLUMN_MAP on
@@ -137,7 +138,7 @@ class ExcelWriter:
 
         Only the arquivada_em column is touched; every other field on
         these rows keeps its last known value from before the task
-        disappeared from Jira, by design (see design-decisions.md).
+        disappeared from ClickUp, by design (see design-decisions.md).
 
         Args:
             file_path: Path to the local workbook.
@@ -199,7 +200,7 @@ class ExcelWriter:
         Args:
             worksheet: The ``FATO_TAREFA_ETIQUETA`` worksheet.
             table: The fact table holding the associations.
-            task_id: Jira issue key.
+            task_id: Task ID.
             tag_id: Surrogate tag ID.
         """
         new_row = next_row(table)
@@ -335,7 +336,7 @@ class ExcelWriter:
     def _write_duplicate_row(worksheet, row: int, duplicate: dict) -> None:
         """Write one removed-duplicate record onto a row.
 
-        This sheet has a fixed four-column layout (nome, jira_email,
+        This sheet has a fixed four-column layout (nome, clickup_email,
         clockify_email, motivo), so the columns are addressed by position
         instead of through a header map.
 
@@ -345,7 +346,7 @@ class ExcelWriter:
             duplicate: The duplicate record to write.
         """
         worksheet.cell(row=row, column=1, value=duplicate["nome"])
-        worksheet.cell(row=row, column=2, value=duplicate["jira_email"])
+        worksheet.cell(row=row, column=2, value=duplicate["clickup_email"])
         worksheet.cell(row=row, column=3, value=duplicate["clockify_email"])
         worksheet.cell(row=row, column=4, value=duplicate["reason"])
 
