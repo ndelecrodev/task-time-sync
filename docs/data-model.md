@@ -18,13 +18,14 @@ usado como chave de junção.
 **Fonte editável:** a aba `DIM_FUNCIONARIO` da planilha é onde alguém corrige ou
 adiciona colaboradores manualmente. Antes de cada execução, `EmployeeDataSyncService`
 lê essa aba com `ExcelReader` e grava as linhas na tabela `funcionarios` do
-Postgres via `PostgresClient.upsert_employee`, casando por `jira_email` ou
-`clockify_email` — a coluna se chama `jira_email` por herança do schema já
-implantado no Supabase (ver [`design-decisions.md`](design-decisions.md#22),
-identificador de dados, não renomeado nesta migração), mas guarda o e-mail
-registrado do colaborador, hoje casado contra o assignee do ClickUp.
+Postgres via `PostgresClient.upsert_employee`, casando por `clickup_email` ou
+`clockify_email` — a coluna, antes chamada `jira_email` por herança do schema
+implantado na era Jira, foi renomeada para `clickup_email` (ver
+[`design-decisions.md`](design-decisions.md#22)) para deixar de carregar um nome
+que não fazia mais sentido pós-migração; ela guarda o e-mail registrado do
+colaborador, casado contra o assignee do ClickUp.
 
-**Duplicatas:** a primeira linha a usar um dado `jira_email` ou `clockify_email`
+**Duplicatas:** a primeira linha a usar um dado `clickup_email` ou `clockify_email`
 é sincronizada normalmente; qualquer linha seguinte que repita um dos dois é
 tratada como duplicata (`EmployeeDataSyncService._split_duplicates`), recebe um
 motivo e é gravada na aba `DUPLICADOS_REMOVIDOS` em vez de ser sincronizada.

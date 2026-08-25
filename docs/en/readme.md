@@ -9,6 +9,10 @@ The spreadsheet is not a dump: it is the final product, with tables, formulas, a
 Full documentation (architecture, data model, design decisions) is available
 at https://ndelecrodev.github.io/task-time-sync-docs/
 
+> **Note:** this project migrated its task source from Jira to ClickUp. A
+> frozen snapshot of the Jira-based version is preserved on the
+> `jira-integration` branch, for reference.
+
 ---
 
 ## Flow overview

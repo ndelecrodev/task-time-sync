@@ -19,13 +19,13 @@ as the join key.
 corrects or adds employees by hand. Before each run, `EmployeeDataSyncService`
 reads that tab with `ExcelReader` and writes the rows into Postgres'
 `funcionarios` table via `PostgresClient.upsert_employee`, matched by either
-`jira_email` or `clockify_email` — the column is still named `jira_email`,
-inherited from the schema already deployed in Supabase (see
-[`design-decisions.md`](design-decisions.md#22), a data identifier not
-renamed in this migration), but it holds the employee's registered email,
-today matched against the ClickUp assignee.
+`clickup_email` or `clockify_email` — the column, previously named
+`jira_email` as inherited from the schema deployed in the Jira era, was
+renamed to `clickup_email` (see [`design-decisions.md`](design-decisions.md#22))
+to stop carrying a name that no longer made sense after the migration; it
+holds the employee's registered email, matched against the ClickUp assignee.
 
-**Duplicates:** the first row to use a given `jira_email` or `clockify_email`
+**Duplicates:** the first row to use a given `clickup_email` or `clockify_email`
 is synced normally; any later row that repeats either one is treated as a
 duplicate (`EmployeeDataSyncService._split_duplicates`), gets a reason attached,
 and is written to the `DUPLICADOS_REMOVIDOS` tab instead of being synced.

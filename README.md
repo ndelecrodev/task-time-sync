@@ -16,6 +16,10 @@ compartilhada entre a planilha e o banco.
 Documentação completa (arquitetura, modelo de dados, decisões de design) está
 disponível em https://ndelecrodev.github.io/task-time-sync-docs/
 
+> **Nota:** este projeto migrou sua fonte de tarefas de Jira para ClickUp. Um
+> snapshot congelado da versão baseada em Jira está preservado na branch
+> `jira-integration`, para referência.
+
 ---
 
 ## Visão geral do fluxo
