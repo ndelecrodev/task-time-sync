@@ -6,9 +6,10 @@ single ready-to-use :data:`settings` instance.
 """
 
 from logging import getLogger
+from typing import Annotated
 
-from pydantic import Field
-from pydantic_settings import BaseSettings
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, NoDecode
 from sqlalchemy import create_engine
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -31,7 +32,8 @@ class Settings(BaseSettings):
 
     CLICKUP_API_TOKEN: str
     CLICKUP_TEAM_ID: str
-    CLICKUP_LIST_ID: str
+    CLICKUP_SPACE_ID: str
+    CLICKUP_FOLDER_IDS: Annotated[list[str], NoDecode]
     API_KEY_CLOCKIFY: str
     WORKSPACE_ID: str
     ALERT_DAYS_LOW: int = Field(
@@ -66,6 +68,30 @@ class Settings(BaseSettings):
     BETTERSTACK_SOURCE_TOKEN: str
     BETTERSTACK_INGESTING_HOST: str
     DATABASE_URL: str
+
+    @field_validator("CLICKUP_FOLDER_IDS", mode="before")
+    @classmethod
+    def _split_folder_ids(cls, value: str | list[str]) -> list[str]:
+        """Parse a comma-separated env var into a list of folder IDs.
+
+        Unlike ``HIGH_PRIORITIES``/``LOW_PRIORITIES``, which rely on
+        pydantic-settings' default JSON-list parsing (``["Highest", "High"]``),
+        this field takes the plainer ``"901710315702,901710321390"`` form, since
+        that is how the folder allowlist is meant to be pasted into ``.env``. The
+        field is annotated with ``NoDecode`` so pydantic-settings hands this
+        validator the raw string instead of trying (and failing) to JSON-decode
+        it first.
+
+        Args:
+            value: The raw ``.env`` string, or an already-parsed list (e.g. when
+                set programmatically in tests).
+
+        Returns:
+            list[str]: Folder IDs with surrounding whitespace stripped.
+        """
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return value
 
     def load_employee_registry(self) -> EmployeeRegistry:
         """Load and validate the employee registry from Postgres.

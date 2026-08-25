@@ -67,6 +67,7 @@ A normalized ClickUp task. Upsert key: `task_id` (ClickUp's `id`).
 | `update_date` | `date \| None` | `date_updated` (millisecond timestamp) |
 | `assignee_email` | `EmailStr \| None` | `assignees[0].email`, falling back to `EmployeeRegistry.get_registered_email` |
 | `tags` | `list[str]` | `tags[*].name` |
+| `turma` | `str` | `folder.name` — read straight from ClickUp, never user-entered; see [`design-decisions.md`](design-decisions.md#23) |
 
 **Multiple assignees:** unlike Jira, ClickUp allows more than one assignee per
 task. Each is normalized individually by `normalize_employee_identifier` (by
@@ -149,7 +150,7 @@ Conventions for the `.xlsx` file: tab name in UPPERCASE, table name in lowercase
 
 | Tab | Table | Columns | Written by |
 |---|---|---|---|
-| `BASE_TAREFAS` | `base_tarefas` | id, titulo, responsavel, area, prioridade, status, data_criacao, prazo, data_conclusao, **dias_restantes**, **atrasado**, **status_prazo**, tipo, criador, data_atualizacao, arquivada_em | `save_tasks` |
+| `BASE_TAREFAS` | `base_tarefas` | id, titulo, responsavel, area, prioridade, status, data_criacao, prazo, data_conclusao, **dias_restantes**, **atrasado**, **status_prazo**, tipo, criador, data_atualizacao, arquivada_em, turma | `save_tasks` |
 | `DETALHES_TAREFA` | `detalhes_tarefa` | id, descricao | `save_details` |
 | `BASE_HORAS` | `base_horas` | id, funcionario, data, horas | `save_hours` |
 | `DIM_ETIQUETAS` | `dim_etiquetas` | id_etiqueta, nome_etiqueta | `save_tags` |
@@ -224,7 +225,7 @@ the corresponding `.xlsx` tab.
 | Table | Role | Upserted by |
 |---|---|---|
 | `funcionarios` | Employee identity, synced from `DIM_FUNCIONARIO`. Includes `photo_url`, the photo URL consumed by the dashboard. | `upsert_employee` |
-| `tarefas` | One row per ClickUp task; `responsavel_id` is `NULL` when the employee could not be mapped. `arquivada_em` holds the timestamp when the task stopped appearing in the `CLICKUP_LIST_ID` fetch (`NULL` while active); the row is never deleted. | `upsert_task` (archiving: `archive_missing_tasks`) |
+| `tarefas` | One row per ClickUp task; `responsavel_id` is `NULL` when the employee could not be mapped. `arquivada_em` holds the timestamp when the task stopped appearing in the fetch (`CLICKUP_SPACE_ID` + `CLICKUP_FOLDER_IDS`, `NULL` while active); the row is never deleted. `turma` holds the ClickUp folder's name (see [`design-decisions.md`](design-decisions.md#23)), read straight from the API, never user-entered. | `upsert_task` (archiving: `archive_missing_tasks`) |
 | `detalhes_tarefa` | Long-form task description. | `upsert_task_detail` |
 | `horas` | One Clockify time entry; `funcionario_id` is `NULL` when the employee could not be mapped. | `upsert_time_entry` |
 | `etiquetas` | Distinct tags assigned to tasks. | `upsert_tag_and_link` |

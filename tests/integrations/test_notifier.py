@@ -22,6 +22,7 @@ def _make_task(due_date: date | None) -> Task:
         creator="Alguém",
         update_date=date.today(),
         tags=[],
+        turma="Primeiro Ano",
     )
 
 

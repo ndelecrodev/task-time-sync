@@ -268,6 +268,47 @@ def test_transform_tasks_unassigned_task_never_consults_registry_fallback(
     spy.assert_not_called()
 
 
+# --- turma (ClickUp folder) --------------------------------------------------------
+
+
+def test_transform_tasks_extracts_turma_from_folder_name(
+    etl_service: EtlService, make_clickup_task
+) -> None:
+    """turma is extracted straight from the raw task's folder.name."""
+    result = etl_service.transform_tasks([make_clickup_task()])
+
+    assert result[0].turma == "Primeiro Ano"
+
+
+def test_transform_tasks_uses_whichever_folder_name_the_task_carries(
+    etl_service: EtlService, make_clickup_task
+) -> None:
+    """turma reflects the task's own folder, not a hardcoded default."""
+    task = make_clickup_task(folder={"id": "fake-folder-primeiro-ano", "name": "Segundo Ano"})
+
+    result = etl_service.transform_tasks([task])
+
+    assert result[0].turma == "Segundo Ano"
+
+
+def test_transform_tasks_discards_task_missing_folder(
+    etl_service: EtlService, make_clickup_task, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A task with no folder key is discarded like any other malformed record.
+
+    No sentinel is used for turma: no path through the real pipeline can reach
+    _build_task without a folder, since pipeline._filter_allowed_folders already
+    excludes such tasks beforehand. This only covers the defensive KeyError path.
+    """
+    task = make_clickup_task()
+    del task["folder"]
+
+    with caplog.at_level(logging.ERROR, logger=ETL_LOGGER):
+        result = etl_service.transform_tasks([task])
+
+    assert result == []
+
+
 # --- area custom field resolution -------------------------------------------------
 
 

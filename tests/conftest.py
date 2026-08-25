@@ -25,6 +25,13 @@ AREA_FIELD_ID = "8dffc5a5-fake-clickup-area-field"
 #: workspace's exact option set (ti, sop, ia, back-end, front-end, design, data).
 AREA_OPTIONS = ["ti", "sop", "ia", "back-end", "front-end", "design", "data"]
 
+# The fake folder ("turma") every make_clickup_task default lives in, and one
+# folder deliberately NOT on the CLICKUP_FOLDER_IDS allowlist below, for the
+# folder-filter tests.
+ALLOWED_FOLDER_ID = "fake-folder-primeiro-ano"
+ALLOWED_FOLDER_NAME = "Primeiro Ano"
+DISALLOWED_FOLDER_ID = "fake-folder-not-a-turma"
+
 # Obviously fake, example.com-style values for every variable Settings requires.
 # Real environment variables outrank the .env file in pydantic-settings, so these
 # win regardless of any local .env and keep Settings() away from real credentials.
@@ -33,7 +40,8 @@ AREA_OPTIONS = ["ti", "sop", "ia", "back-end", "front-end", "design", "data"]
 _FAKE_ENV = {
     "CLICKUP_API_TOKEN": "fake-clickup-token",
     "CLICKUP_TEAM_ID": "fake-team-id",
-    "CLICKUP_LIST_ID": "fake-list-id",
+    "CLICKUP_SPACE_ID": "fake-space-id",
+    "CLICKUP_FOLDER_IDS": ALLOWED_FOLDER_ID,
     "API_KEY_CLOCKIFY": "fake-clockify-key",
     "WORKSPACE_ID": "fake-workspace-id",
     "CLICKUP_AREA_FIELD_ID": AREA_FIELD_ID,
@@ -138,6 +146,7 @@ def make_clickup_task():
             "tags": [{"name": "backend"}],
             "description": "Full description",
             "text_content": None,
+            "folder": {"id": ALLOWED_FOLDER_ID, "name": ALLOWED_FOLDER_NAME},
         }
         task.update(overrides)
         return task

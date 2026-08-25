@@ -116,6 +116,7 @@ def _task(task_id: str = "ABC-1", title: str = "Title") -> Task:
         task_type=TaskType.TASK,
         creator="Carol Lima",
         update_date=date(2026, 1, 5),
+        turma="Primeiro Ano",
     )
 
 
@@ -131,6 +132,7 @@ def test_upsert_task_inserts_when_absent() -> None:
     assert added.titulo == "Title"
     assert added.responsavel_id == 7
     assert added.prioridade == Priority.HIGH
+    assert added.turma == "Primeiro Ano"
     session.commit.assert_called_once()
 
 
@@ -149,6 +151,7 @@ def test_upsert_task_updates_existing_without_inserting() -> None:
         tipo="Task",
         criador="Carol Lima",
         data_atualizacao=date(2026, 1, 5),
+        turma="Old Turma",
     )
     with patched_session() as session:
         session.scalars.return_value = _scalar_result(existing)
@@ -157,6 +160,7 @@ def test_upsert_task_updates_existing_without_inserting() -> None:
     assert existing.titulo == "New Title"
     assert existing.responsavel_id == 7
     assert existing.prioridade == Priority.HIGH
+    assert existing.turma == "Primeiro Ano"
     session.add.assert_not_called()
     session.commit.assert_called_once()
 

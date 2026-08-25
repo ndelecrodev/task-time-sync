@@ -14,7 +14,8 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table
 
 # Header layout of BASE_TAREFAS: the 12 mapped columns first (column 1 is the
-# upsert id), then the 3 formula columns Python only copies, never computes.
+# upsert id), then the 3 formula columns Python only copies, never computes,
+# then "turma" as the last mapped column.
 TASK_HEADERS = [
     "id",
     "titulo",
@@ -31,6 +32,7 @@ TASK_HEADERS = [
     "dias_restantes",
     "atrasado",
     "status_prazo",
+    "turma",
 ]
 
 # Formula text kept verbatim in the template row (row 2). The exact formulas do
@@ -78,6 +80,7 @@ def tasks_workbook_path(tmp_path) -> str:
         "tipo": "Story",
         "criador": "Template Creator",
         "data_atualizacao": date(2025, 7, 12),
+        "turma": "Template Turma",
         **TEMPLATE_FORMULAS,
     }
     for column, header in enumerate(TASK_HEADERS, start=1):

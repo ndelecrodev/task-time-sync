@@ -30,6 +30,36 @@ from sop_pipeline.services.employee_data_sync_service import EmployeeDataSyncSer
 logger = logging.getLogger(__name__)
 
 
+def _filter_allowed_folders(raw_tasks: list[dict]) -> list[dict]:
+    """Keep only tasks whose ClickUp folder is on the explicit allowlist.
+
+    ``ClickUpClient.fetch_tasks`` returns every task in the Space, across every
+    folder in it; this filter is what narrows that down to the folders that
+    actually represent a "turma". It runs here, in the orchestration layer,
+    rather than inside ``ClickUpClient``, because it is a business rule (which
+    folders count for this pipeline) rather than an HTTP/pagination concern —
+    clients in this codebase return raw dicts without interpreting anything
+    (see architecture.md).
+
+    A folder unrelated to a "turma" could be added to the Space later, and it
+    must not silently start flowing into the pipeline, alerts, and reports just
+    by existing there (see design-decisions.md). Adding a folder here is a
+    deliberate, one-line change a human makes to ``CLICKUP_FOLDER_IDS``.
+
+    Args:
+        raw_tasks: Task dicts as returned by ``ClickUpClient.fetch_tasks``.
+
+    Returns:
+        list[dict]: Only the tasks whose ``folder.id`` is in
+        ``settings.CLICKUP_FOLDER_IDS``.
+    """
+    return [
+        task
+        for task in raw_tasks
+        if (task.get("folder") or {}).get("id") in settings.CLICKUP_FOLDER_IDS
+    ]
+
+
 def sync_clickup(etl: EtlService, postgres_client: PostgresClient, name_to_id: dict) -> list[Task]:
     """Fetch ClickUp tasks, transform them and write them to the spreadsheet.
 
@@ -42,7 +72,8 @@ def sync_clickup(etl: EtlService, postgres_client: PostgresClient, name_to_id: d
         list[Task]: The tasks that were persisted, reused later for alerting.
     """
     client = ClickUpClient()
-    raw_tasks = client.fetch_tasks(settings.CLICKUP_LIST_ID)
+    raw_tasks = client.fetch_tasks(settings.CLICKUP_TEAM_ID, settings.CLICKUP_SPACE_ID)
+    raw_tasks = _filter_allowed_folders(raw_tasks)
 
     tasks = etl.transform_tasks(raw_tasks)
     details = etl.transform_details(raw_tasks)

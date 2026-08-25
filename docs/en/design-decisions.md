@@ -10,7 +10,7 @@ Record of non-obvious choices in the project and the reasoning behind them.
 `ExcelWriter._find_row` traverses column 1 of the table looking for the ID. If found, it overwrites the row; if not, it adds a new one.
 
 **Why:** makes execution **idempotent**. The pipeline runs on schedule and
-the fetch to `CLICKUP_LIST_ID` usually brings back tasks that are already in the spreadsheet. Without
+the fetch to the configured Space/folders usually brings back tasks that are already in the spreadsheet. Without
 upsert, each execution would duplicate rows. With it, running twice in a row
 produces exactly the same file.
 
@@ -274,28 +274,30 @@ to group by area later.
 
 `PostgresClient.archive_missing_tasks` runs at the end of `sync_clickup` and
 sets `tarefas.arquivada_em = now()` on every row whose `task_id` didn't show
-up in the current run's fetch (`ClickUpClient.fetch_tasks(CLICKUP_LIST_ID)`)
+up in the current run's fetch (`ClickUpClient.fetch_tasks(CLICKUP_TEAM_ID,
+CLICKUP_SPACE_ID)`, already filtered by `pipeline._filter_allowed_folders`)
 and that wasn't already archived; the row is never deleted. Before the
 ClickUp migration (decision 22), this same logic ran at the end of
 `sync_jira` against `JIRA_JQL`.
 
 **Why:** follows the same philosophy as decision 8, never discard silently.
-A transient ClickUp failure or a misconfigured `CLICKUP_LIST_ID` can make
-the returned task list come back empty or incomplete; without timestamp
-archiving, a `DELETE` at that point would wipe out tasks that still exist in
-ClickUp, and the next successful `sync_clickup` would have no way to
-recover what was lost. Marking with a timestamp instead of deleting keeps
-the problem visible and reversible.
+A transient ClickUp failure or a misconfigured `CLICKUP_SPACE_ID`/
+`CLICKUP_FOLDER_IDS` can make the returned task list come back empty or
+incomplete; without timestamp archiving, a `DELETE` at that point would wipe
+out tasks that still exist in ClickUp, and the next successful
+`sync_clickup` would have no way to recover what was lost. Marking with a
+timestamp instead of deleting keeps the problem visible and reversible.
 
 **Trade-off:** Caution when touching this: the set used to decide what to
-archive must be `all_ids_from_clickup` (every `id` the raw ClickUp fetch
-returned, before any validation), not `valid_ids` (the tasks that already
-passed Pydantic validation, decision 8). Using `valid_ids` would archive a
-task discarded by validation (an out-of-enum `priority`, for example) as if
-it had disappeared from ClickUp, even though it is still active there,
-conflating "didn't come back in this fetch" with "came back, but failed
-validation." That was, in fact, an early version's bug (then named
-`all_ids_from_jira`), fixed before it reached production.
+archive must be `all_ids_from_clickup` (every `id` the ClickUp fetch
+returned once already narrowed down to the allowed folders, but before any
+`Task` validation), not `valid_ids` (the tasks that already passed Pydantic
+validation, decision 8). Using `valid_ids` would archive a task discarded by
+validation (an out-of-enum `priority`, for example) as if it had disappeared
+from ClickUp, even though it is still active there, conflating "didn't come
+back in this fetch" with "came back, but failed validation." That was, in
+fact, an early version's bug (then named `all_ids_from_jira`), fixed before
+it reached production.
 
 ## 19. Archiving is also marked in the spreadsheet, in a column that only ever receives that one write
 
@@ -426,3 +428,39 @@ ever adopts Custom Task Types, `_build_task` will need revisiting to map
 `Task.priority` is left unset and Pydantic validation fails, discarding the
 task through the same path that already existed (decision 8) — the same
 behavior a priority-less Jira issue always had.
+
+## 23. Synced ClickUp folders are an explicit allowlist, not "every folder in the Space"
+
+`ClickUpClient.fetch_tasks` fetches the whole Space configured in
+`CLICKUP_SPACE_ID` (`GET /team/{team_id}/task` with `space_ids[]=...`),
+which includes any folder that exists there, of any kind.
+`pipeline._filter_allowed_folders` runs right after and drops every task
+whose `folder.id` isn't in `CLICKUP_FOLDER_IDS` — a fixed list, configured
+in `.env`, of the folder IDs that actually represent a "turma" (today
+"Primeiro Ano" and "Segundo Ano") — before `EtlService` ever sees those
+tasks.
+
+**Why:** the obvious alternative would be to automatically sync every
+folder that exists in the Space, with no fixed list. That was deliberately
+rejected: a folder unrelated to a "turma" could be created in the same
+Space later — an internal team-planning folder, say, or a temporary
+experiment — and nothing about it guarantees its tasks follow the same
+contract (`turma`, `area`, priorities) the rest of the pipeline expects.
+Without the allowlist, that folder would start feeding the pipeline, Teams
+alerts, and reports just by having been created in the Space, without
+anyone having made that call on purpose.
+
+This is the same "never change scope silently" philosophy already present
+in this project, just pointed the other way: decision 8 (never silently
+discard a record) and decision 18 (never silently delete an archived task)
+guard against **losing** data without warning; the folder allowlist guards
+against **gaining** scope without warning. In both cases, the principle is
+that a scope change — in or out — should be a deliberate act, not a side
+effect of something that happened in another system (Jira before, ClickUp
+now).
+
+**Trade-off:** when a new turma is actually created (say, "Terceiro Ano"),
+syncing it requires a manual action: someone has to add the new folder's ID
+to `CLICKUP_FOLDER_IDS` and let the scheduled run pick it up. There's no
+automatic discovery of new turmas. That friction is deliberate — it's the
+price of never including a folder by accident.

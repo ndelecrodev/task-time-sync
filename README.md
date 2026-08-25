@@ -135,7 +135,7 @@ comentário explicando onde obter o valor. Resumo:
 
 | Grupo | Variáveis |
 |---|---|
-| ClickUp | `CLICKUP_API_TOKEN`, `CLICKUP_TEAM_ID`, `CLICKUP_LIST_ID`, `CLICKUP_AREA_FIELD_ID` |
+| ClickUp | `CLICKUP_API_TOKEN`, `CLICKUP_TEAM_ID`, `CLICKUP_SPACE_ID`, `CLICKUP_FOLDER_IDS`, `CLICKUP_AREA_FIELD_ID` |
 | Clockify | `API_KEY_CLOCKIFY`, `WORKSPACE_ID`, `WORKSPACE_NAME` |
 | Postgres / Supabase | `DATABASE_URL` |
 | Regras de alerta | `ALERT_DAYS_LOW`, `ALERT_DAYS_MEDIUM`, `ALERT_DAYS_HIGH`, `HIGH_PRIORITIES`, `LOW_PRIORITIES` |
@@ -166,16 +166,27 @@ e deve apontar para o **transaction pooler** do Supabase (porta `6543`), não pa
 a conexão direta: o pooler suporta IPv4, enquanto a conexão direta do Supabase só
 responde em IPv6, o que quebra em redes e provedores sem suporte a IPv6.
 
-### Os identificadores do ClickUp (`CLICKUP_TEAM_ID`, `CLICKUP_LIST_ID`, `CLICKUP_AREA_FIELD_ID`)
+### Os identificadores do ClickUp (`CLICKUP_TEAM_ID`, `CLICKUP_SPACE_ID`, `CLICKUP_FOLDER_IDS`, `CLICKUP_AREA_FIELD_ID`)
 
-`CLICKUP_LIST_ID` define **de qual List do ClickUp o pipeline busca tarefas**: o
-`ClickUpClient` chama `GET /list/{list_id}/task` e pagina o resultado até o fim,
-sempre com `include_closed=true` (para que tarefas concluídas continuem
-aparecendo na contagem de concluídas) e `subtasks=true` (para que subtarefas
-voltem como tarefas próprias, do mesmo jeito que uma issue do tipo Sub-task do
-Jira aparecia na mesma busca). `CLICKUP_TEAM_ID` identifica o Team (Workspace) do
-ClickUp e `CLICKUP_AREA_FIELD_ID` é o ID do campo customizado "Area" (tipo
-`drop_down`) usado para rotear os alertas do Teams.
+`CLICKUP_SPACE_ID` define **de qual Space do ClickUp o pipeline busca tarefas**:
+o `ClickUpClient` chama `GET /team/{team_id}/task` com `space_ids[]=<CLICKUP_SPACE_ID>`
+e pagina o resultado até o fim, sempre com `include_closed=true` (para que
+tarefas concluídas continuem aparecendo na contagem de concluídas) e
+`subtasks=true` (para que subtarefas voltem como tarefas próprias, do mesmo
+jeito que uma issue do tipo Sub-task do Jira aparecia na mesma busca).
+
+Esse fetch traz toda tarefa do Space, de qualquer pasta. `CLICKUP_FOLDER_IDS`
+é uma allowlist explícita e obrigatória — uma lista de IDs de pasta ("turma"),
+separados por vírgula — que `pipeline._filter_allowed_folders` usa para
+descartar qualquer tarefa cuja pasta não esteja na lista, antes mesmo de
+`EtlService` vê-la. É deliberadamente uma allowlist, não "toda pasta do Space
+automaticamente": uma pasta sem relação com "turma" pode ser adicionada ao
+Space depois, e não deve começar a alimentar o pipeline, os alertas e os
+relatórios só por existir lá (ver [`design-decisions.md`](docs/design-decisions.md#23)).
+
+`CLICKUP_TEAM_ID` identifica o Team (Workspace) do ClickUp e
+`CLICKUP_AREA_FIELD_ID` é o ID do campo customizado "Area" (tipo `drop_down`)
+usado para rotear os alertas do Teams.
 
 O **valor real desses IDs fica apenas no `.env` local** e não é publicado neste
 repositório. O `.env.example` traz apenas placeholders vazios.

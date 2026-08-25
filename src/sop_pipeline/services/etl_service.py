@@ -150,6 +150,11 @@ class EtlService:
         priority_label = (raw_task.get("priority") or {}).get("priority")
         priority = CLICKUP_PRIORITY_MAP.get(priority_label) if priority_label else None
 
+        # No sentinel needed for turma: pipeline._filter_allowed_folders already
+        # discards every task without a folder on the CLICKUP_FOLDER_IDS
+        # allowlist before transform_tasks ever sees it, so a KeyError here would
+        # only mean genuinely malformed ClickUp data — handled like any other
+        # required field, by discarding this one record (see RECORD_ERRORS).
         return Task(
             task_id=raw_task["id"],
             title=raw_task.get("name", "No title"),
@@ -165,6 +170,7 @@ class EtlService:
             update_date=self._parse_millis_to_date(raw_task.get("date_updated")),
             assignee_email=assignee_email,
             tags=[tag.get("name") for tag in raw_task.get("tags", [])],
+            turma=raw_task["folder"]["name"],
         )
 
     def _resolve_area(self, custom_fields: list[dict]) -> str:
