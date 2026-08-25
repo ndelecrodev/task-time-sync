@@ -16,11 +16,11 @@ from sop_pipeline.config.employees import EmployeeRegistry
 from sop_pipeline.config.settings import settings
 
 
-def _employee_row(canonical_name: str, jira_email: str, clockify_email: str) -> SimpleNamespace:
+def _employee_row(canonical_name: str, clickup_email: str, clockify_email: str) -> SimpleNamespace:
     """A stand-in for a Funcionarios ORM row with the attributes the loader reads."""
     return SimpleNamespace(
         canonical_name=canonical_name,
-        jira_email=jira_email,
+        clickup_email=clickup_email,
         clockify_email=clockify_email,
     )
 

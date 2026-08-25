@@ -5,30 +5,35 @@
 
 ## Python models
 
-Defined in `src/sop_pipeline/models/schemas.py`. They are Pydantic models: a Jira
-issue that doesn't satisfy the contract is discarded with a `warning`, instead of
-bringing down the entire execution.
+Defined in `src/sop_pipeline/models/schemas.py`. They are Pydantic models: a
+ClickUp task that doesn't satisfy the contract is discarded with a `warning`,
+instead of bringing down the entire execution.
 
 ### Employee identity
 
-Since Jira identifies people by display name and Clockify by email, a mapping
-layer normalizes both to a canonical name used as the join key.
+Since ClickUp identifies people by the assignee's `username`/email and
+Clockify by email, a mapping layer normalizes both to a canonical name used
+as the join key.
 
 **Editable source:** the workbook's `DIM_FUNCIONARIO` tab is where someone
 corrects or adds employees by hand. Before each run, `EmployeeDataSyncService`
 reads that tab with `ExcelReader` and writes the rows into Postgres'
 `funcionarios` table via `PostgresClient.upsert_employee`, matched by either
-`jira_email` or `clockify_email`.
+`clickup_email` or `clockify_email` — the column, previously named
+`jira_email` as inherited from the schema deployed in the Jira era, was
+renamed to `clickup_email` (see [`design-decisions.md`](design-decisions.md#22))
+to stop carrying a name that no longer made sense after the migration; it
+holds the employee's registered email, matched against the ClickUp assignee.
 
-**Duplicates:** the first row to use a given `jira_email` or `clockify_email`
+**Duplicates:** the first row to use a given `clickup_email` or `clockify_email`
 is synced normally; any later row that repeats either one is treated as a
 duplicate (`EmployeeDataSyncService._split_duplicates`), gets a reason attached,
 and is written to the `DUPLICADOS_REMOVIDOS` tab instead of being synced.
 
 **Runtime use:** `Settings.load_employee_registry` reads the already-synced
 `funcionarios` table and builds an `EmployeeRegistry`, used by `EtlService` to
-normalize `Task.assignee` (from Jira) and `TimeEntry.employee` (from Clockify)
-to the canonical name.
+normalize `Task.assignee` (from ClickUp) and `TimeEntry.employee` (from
+Clockify) to the canonical name.
 
 **Employee photo:** `funcionarios.photo_url` holds the public Supabase Storage
 URL of the employee's photo, or `None` when no photo has been uploaded yet.
@@ -44,24 +49,46 @@ report rather than hidden.
 
 ### `Task`
 
-A normalized Jira issue. Upsert key: `task_id` (the Jira *key*).
+A normalized ClickUp task. Upsert key: `task_id` (ClickUp's `id`).
 
-| Field | Type | Origin in Jira |
+| Field | Type | Origin in ClickUp |
 |---|---|---|
-| `task_id` | `str` | `key` |
-| `title` | `str` | `fields.summary` (default `"No title"`) |
-| `assignee` | `str` | `fields.assignee.displayName` |
-| `priority` | `Priority` | `fields.priority.name` |
-| `status` | `str` | `fields.status.name` |
-| `area` | `str \| None` | custom field configured in `JIRA_CUSTOMFIELD_AREA` |
-| `creation_date` | `date` | `fields.created` |
-| `due_date` | `date \| None` | `fields.duedate` |
-| `completion_date` | `date \| None` | `fields.resolutiondate` |
-| `task_type` | `TaskType` | `fields.issuetype.name` |
-| `creator` | `str \| None` | `fields.creator.displayName` |
-| `update_date` | `date \| None` | `fields.updated` |
-| `assignee_email` | `EmailStr \| None` | `fields.assignee.emailAddress` |
-| `tags` | `list[str]` | `fields.labels` |
+| `task_id` | `str` | `id` |
+| `title` | `str` | `name` (default `"No title"`) |
+| `assignee` | `str` | `assignees[*].username`/`.email`, each normalized individually and joined with `", "` |
+| `priority` | `Priority` | `priority.priority` (`urgent`/`high`/`normal`/`low`), mapped onto the enum |
+| `status` | `str` | `status.status` |
+| `area` | `str \| None` | resolved option of the `drop_down` custom field configured in `CLICKUP_AREA_FIELD_ID` |
+| `creation_date` | `date` | `date_created` (millisecond timestamp) |
+| `due_date` | `date \| None` | `due_date` (millisecond timestamp) |
+| `completion_date` | `date \| None` | `date_closed` (millisecond timestamp) |
+| `task_type` | `TaskType` | fixed to `TaskType.TASK` — see [`design-decisions.md`](design-decisions.md#22) |
+| `creator` | `str \| None` | `creator.username` |
+| `update_date` | `date \| None` | `date_updated` (millisecond timestamp) |
+| `assignee_email` | `EmailStr \| None` | `assignees[0].email`, falling back to `EmployeeRegistry.get_registered_email` |
+| `tags` | `list[str]` | `tags[*].name` |
+| `turma` | `str` | `folder.name` — read straight from ClickUp, never user-entered; see [`design-decisions.md`](design-decisions.md#23) |
+
+**Multiple assignees:** unlike Jira, ClickUp allows more than one assignee per
+task. Each is normalized individually by `normalize_employee_identifier` (by
+email when present, otherwise by `username`), and the resulting canonical
+names are joined into `assignee`. Only the **first** assignee's email feeds
+`assignee_email`, because a Teams @mention can only target one person — see
+[`design-decisions.md`](design-decisions.md#22).
+
+**Area (`drop_down` custom field):** ClickUp returns `custom_fields` as a list
+of field objects, each with `id`, `name`, `type`, and optionally `value`. For
+the `drop_down` field configured in `CLICKUP_AREA_FIELD_ID`, `value` is an
+**index** into that field's own `type_config.options` array, not the option's
+text — the index is resolved against that array to get the area name. When
+the field is absent, has no `value` key, or the index doesn't resolve, the
+result is `NO_AREA`.
+
+**Milliseconds:** `date_created`, `due_date`, `date_closed`, and
+`date_updated` arrive as millisecond Unix-timestamp strings (e.g.
+`"1753401600000"`), not ISO 8601 like Jira's.
+`EtlService._parse_millis_to_date` converts each to a `date` in
+America/Sao_Paulo, handling `None`.
 
 Computed fields (`@computed_field`), used by the alert rule and notification text — are **not** written to the spreadsheet, which has its own formulas:
 
@@ -76,7 +103,7 @@ for an overdue task, the notification line reads "Tarefa atrasada há N
 dia(s)" (with a positive N); for a task still within its deadline, "Dias
 restantes: N dia(s)"; with no deadline set, "Dias restantes: Indefinido".
 
-When Jira provides no assignee or area, the ETL uses the texts
+When ClickUp provides no assignee or area, the ETL uses the texts
 `"There is no one responsible."` and `"There is no one area."` instead of discarding the
 row — the task still appears in the report.
 
@@ -100,8 +127,8 @@ The long description of a task, separated because it's a large text and goes in 
 
 | Field | Type | Origin |
 |---|---|---|
-| `task_id` | `str` | `key` |
-| `description` | `str \| None` | `fields.description`, flattened from ADF format to plain text |
+| `task_id` | `str` | `id` |
+| `description` | `str \| None` | `description`, falling back to `text_content` when absent |
 
 ### Enums
 
@@ -111,7 +138,7 @@ The long description of a task, separated because it's a large text and goes in 
 | `TaskType` | `Bug`, `Task`, `Story`, `Epic`, `Subtask` |
 | `DeadlineStatus` | `Concluído`, `Atrasado`, `Atenção`, `No prazo`, `Sem prazo` |
 
-The values of `Priority` and `TaskType` are exactly the strings the Jira API returns. Those of `DeadlineStatus` are exactly the strings the `status_prazo` column formula produces in Excel. **None of these values can be translated** — only the enum member names.
+`Priority`'s values are Jira's historical labels; the ETL maps ClickUp's four priority levels (`urgent`/`high`/`normal`/`low`) onto them — see [`design-decisions.md`](design-decisions.md#22). `TaskType` is fixed to `Task` for every ClickUp-sourced task, for the same reason. Those of `DeadlineStatus` are exactly the strings the `status_prazo` column formula produces in Excel. **None of these values can be translated** — only the enum member names.
 
 ---
 
@@ -123,7 +150,7 @@ Conventions for the `.xlsx` file: tab name in UPPERCASE, table name in lowercase
 
 | Tab | Table | Columns | Written by |
 |---|---|---|---|
-| `BASE_TAREFAS` | `base_tarefas` | id, titulo, responsavel, area, prioridade, status, data_criacao, prazo, data_conclusao, **dias_restantes**, **atrasado**, **status_prazo**, tipo, criador, data_atualizacao, arquivada_em | `save_tasks` |
+| `BASE_TAREFAS` | `base_tarefas` | id, titulo, responsavel, area, prioridade, status, data_criacao, prazo, data_conclusao, **dias_restantes**, **atrasado**, **status_prazo**, tipo, criador, data_atualizacao, arquivada_em, turma | `save_tasks` |
 | `DETALHES_TAREFA` | `detalhes_tarefa` | id, descricao | `save_details` |
 | `BASE_HORAS` | `base_horas` | id, funcionario, data, horas | `save_hours` |
 | `DIM_ETIQUETAS` | `dim_etiquetas` | id_etiqueta, nome_etiqueta | `save_tags` |
@@ -133,7 +160,7 @@ The three columns in **bold** are calculated by Excel formula; Python
 only copies the formula text when creating a new row. `arquivada_em` breaks
 the pattern too: it's written by `ExcelWriter.mark_archived_tasks`, not
 `save_tasks`, and it's the only column still touched on a row once the task
-has dropped out of Jira — every other field on an archived row stays frozen
+has dropped out of ClickUp — every other field on an archived row stays frozen
 at its last known value, by design (see design decision #19).
 
 `Task` → `BASE_TAREFAS` is defined by the dict `TASK_COLUMN_MAP` in
@@ -198,7 +225,7 @@ the corresponding `.xlsx` tab.
 | Table | Role | Upserted by |
 |---|---|---|
 | `funcionarios` | Employee identity, synced from `DIM_FUNCIONARIO`. Includes `photo_url`, the photo URL consumed by the dashboard. | `upsert_employee` |
-| `tarefas` | One row per Jira issue; `responsavel_id` is `NULL` when the employee could not be mapped. `arquivada_em` holds the timestamp when the task stopped appearing in `JIRA_JQL` (`NULL` while active); the row is never deleted. | `upsert_task` (archiving: `archive_missing_tasks`) |
+| `tarefas` | One row per ClickUp task; `responsavel_id` is `NULL` when the employee could not be mapped. `arquivada_em` holds the timestamp when the task stopped appearing in the fetch (`CLICKUP_SPACE_ID` + `CLICKUP_FOLDER_IDS`, `NULL` while active); the row is never deleted. `turma` holds the ClickUp folder's name (see [`design-decisions.md`](design-decisions.md#23)), read straight from the API, never user-entered. | `upsert_task` (archiving: `archive_missing_tasks`) |
 | `detalhes_tarefa` | Long-form task description. | `upsert_task_detail` |
 | `horas` | One Clockify time entry; `funcionario_id` is `NULL` when the employee could not be mapped. | `upsert_time_entry` |
 | `etiquetas` | Distinct tags assigned to tasks. | `upsert_tag_and_link` |

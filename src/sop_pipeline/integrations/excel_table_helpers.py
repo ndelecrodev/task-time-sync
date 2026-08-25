@@ -104,7 +104,7 @@ def link_exists(worksheet, table, task_id: str, tag_id: int) -> bool:
     Args:
         worksheet: The ``FATO_TAREFA_ETIQUETA`` worksheet.
         table: The fact table holding the associations.
-        task_id: Jira issue key.
+        task_id: Task ID.
         tag_id: Surrogate tag ID.
 
     Returns:

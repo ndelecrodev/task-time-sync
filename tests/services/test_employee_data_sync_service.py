@@ -1,6 +1,6 @@
 """Tests for EmployeeDataSyncService (scenario #8).
 
-Two rows sharing a jira_email or clockify_email must result in only the first
+Two rows sharing a clickup_email or clockify_email must result in only the first
 being upserted; every later row repeating either email is routed to the
 duplicates sheet with a recorded reason.
 """
@@ -14,11 +14,11 @@ from sop_pipeline.services.employee_data_sync_service import EmployeeDataSyncSer
 SAVE_DUPLICATES = "sop_pipeline.services.employee_data_sync_service.ExcelWriter.save_duplicates"
 
 
-def _row(nome: str, jira_email: str, clockify_email: str, photo_url: str | None = None) -> dict:
+def _row(nome: str, clickup_email: str, clockify_email: str, photo_url: str | None = None) -> dict:
     """One employee row as ExcelReader.read_employees would return it."""
     return {
         "nome": nome,
-        "jira_email": jira_email,
+        "clickup_email": clickup_email,
         "clockify_email": clockify_email,
         "photo_url": photo_url,
     }
@@ -32,18 +32,18 @@ def _service(rows: list[dict]) -> tuple[EmployeeDataSyncService, MagicMock]:
     return EmployeeDataSyncService(reader, postgres_client), postgres_client
 
 
-@pytest.mark.parametrize("colliding_field", ["jira_email", "clockify_email"])
+@pytest.mark.parametrize("colliding_field", ["clickup_email", "clockify_email"])
 def test_sync_upserts_only_first_of_duplicate_email(colliding_field: str) -> None:
     """Only the first row of a colliding email is upserted; the rest are duplicates."""
     shared = "shared@example.com"
     first = _row(
         "Alice Silva",
-        jira_email=shared if colliding_field == "jira_email" else "alice.jira@example.com",
+        clickup_email=shared if colliding_field == "clickup_email" else "alice.jira@example.com",
         clockify_email=shared if colliding_field == "clockify_email" else "alice.ck@example.com",
     )
     second = _row(
         "Alice Duplicate",
-        jira_email=shared if colliding_field == "jira_email" else "alice2.jira@example.com",
+        clickup_email=shared if colliding_field == "clickup_email" else "alice2.jira@example.com",
         clockify_email=shared if colliding_field == "clockify_email" else "alice2.ck@example.com",
     )
     service, postgres_client = _service([first, second])
@@ -53,7 +53,7 @@ def test_sync_upserts_only_first_of_duplicate_email(colliding_field: str) -> Non
 
     postgres_client.upsert_employee.assert_called_once_with(
         canonical_name="Alice Silva",
-        jira_email=first["jira_email"],
+        clickup_email=first["clickup_email"],
         clockify_email=first["clockify_email"],
         photo_url=first["photo_url"],
     )
@@ -77,7 +77,7 @@ def test_sync_records_reason_on_duplicate_rows() -> None:
 
 
 def test_sync_treats_repeated_clockify_email_alone_as_duplicate() -> None:
-    """A fresh jira_email but a repeated clockify_email is still a duplicate."""
+    """A fresh clickup_email but a repeated clockify_email is still a duplicate."""
     first = _row("Alice Silva", "alice.jira@example.com", "shared.ck@example.com")
     second = _row("Bob Souza", "bob.jira@example.com", "shared.ck@example.com")
     service, postgres_client = _service([first, second])
