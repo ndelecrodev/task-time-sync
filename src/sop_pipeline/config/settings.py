@@ -8,7 +8,7 @@ single ready-to-use :data:`settings` instance.
 from logging import getLogger
 from typing import Annotated
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, EmailStr
 from pydantic_settings import BaseSettings, NoDecode
 from sqlalchemy import create_engine
 from sqlalchemy.exc import SQLAlchemyError
@@ -68,8 +68,8 @@ class Settings(BaseSettings):
     BETTERSTACK_SOURCE_TOKEN: str
     BETTERSTACK_INGESTING_HOST: str
     DATABASE_URL: str
-    DEFAULT_ANONYMOUS_EMAIL: str = Field(
-        default="anonimo@empresa.local",
+    DEFAULT_ANONYMOUS_EMAIL: EmailStr = Field(
+        default="anonimo@quimia.com",
         description="Default anonymous email for blank cells during Excel import",
     )
 
