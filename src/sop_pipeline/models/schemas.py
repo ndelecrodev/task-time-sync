@@ -174,3 +174,20 @@ class TaskDetail(BaseModel):
 
     task_id: str
     description: str | None = None
+
+class EmployeeMapping(BaseModel):
+    """A single employee with their identifiers across ClickUp and Clockify.
+
+    Attributes:
+        canonical_name: The normalized name used as the join key in the report.
+        clickup_email: The email address that appears in ClickUp assignee records.
+        clockify_email: The email address that appears in Clockify time entries.
+    """
+
+    canonical_name: str = Field(..., description="Normalized name for the report")
+    clickup_email: EmailStr = Field(..., description="Email in ClickUp")
+    clockify_email: EmailStr = Field(..., description="Email in Clockify")
+
+    def __hash__(self) -> int:
+        """Make hashable for deduplication."""
+        return hash((self.canonical_name, self.clickup_email, self.clockify_email))
