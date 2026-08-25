@@ -68,6 +68,10 @@ class Settings(BaseSettings):
     BETTERSTACK_SOURCE_TOKEN: str
     BETTERSTACK_INGESTING_HOST: str
     DATABASE_URL: str
+    DEFAULT_ANONYMOUS_EMAIL: str = Field(
+        default="anonimo@empresa.local",
+        description="Default anonymous email for blank cells during Excel import",
+    )
 
     @field_validator("CLICKUP_FOLDER_IDS", mode="before")
     @classmethod
