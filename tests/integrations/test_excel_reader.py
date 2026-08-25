@@ -45,9 +45,9 @@ def test_fill_blank_emails_replaces_none_values() -> None:
         "clockify_email": None,
         "photo_url": None,
     }
-    
+
     result = ExcelReader._fill_blank_emails(row)
-    
+
     assert result["clickup_email"] == settings.DEFAULT_ANONYMOUS_EMAIL
     assert result["clockify_email"] == settings.DEFAULT_ANONYMOUS_EMAIL
     assert result["photo_url"] is None  # photo_url should remain unchanged
@@ -61,9 +61,9 @@ def test_fill_blank_emails_keeps_non_blank_values() -> None:
         "clockify_email": None,
         "photo_url": "https://example.com/photo.jpg",
     }
-    
+
     result = ExcelReader._fill_blank_emails(row)
-    
+
     assert result["clickup_email"] == "user@example.com"
     assert result["clockify_email"] == settings.DEFAULT_ANONYMOUS_EMAIL
     assert result["photo_url"] == "https://example.com/photo.jpg"
