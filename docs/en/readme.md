@@ -131,7 +131,7 @@ Variables are grouped by service within `.env.example`, each one with a comment 
 
 | Group | Variables |
 |---|---|
-| ClickUp | `CLICKUP_API_TOKEN`, `CLICKUP_TEAM_ID`, `CLICKUP_SPACE_ID`, `CLICKUP_FOLDER_IDS`, `CLICKUP_AREA_FIELD_ID` |
+| ClickUp | `CLICKUP_API_TOKEN`, `CLICKUP_TEAM_ID`, `CLICKUP_SPACE_ID`, `CLICKUP_FOLDER_IDS` |
 | Clockify | `API_KEY_CLOCKIFY`, `WORKSPACE_ID`, `WORKSPACE_NAME` |
 | Postgres / Supabase | `DATABASE_URL` |
 | Alert rules | `ALERT_DAYS_LOW`, `ALERT_DAYS_MEDIUM`, `ALERT_DAYS_HIGH`, `HIGH_PRIORITIES`, `LOW_PRIORITIES` |
@@ -162,13 +162,13 @@ the direct connection: the pooler supports IPv4, while Supabase's direct
 connection only answers on IPv6, which breaks on networks and providers
 without IPv6 support.
 
-### The ClickUp identifiers (`CLICKUP_TEAM_ID`, `CLICKUP_SPACE_ID`, `CLICKUP_FOLDER_IDS`, `CLICKUP_AREA_FIELD_ID`)
+### The ClickUp identifiers (`CLICKUP_TEAM_ID`, `CLICKUP_SPACE_ID`, `CLICKUP_FOLDER_IDS`)
 
 `CLICKUP_SPACE_ID` defines **which ClickUp Space the pipeline fetches tasks from**: `ClickUpClient` calls `GET /team/{team_id}/task` with `space_ids[]=<CLICKUP_SPACE_ID>` and paginates through the results to the end, always with `include_closed=true` (so completed tasks still count toward the completed total) and `subtasks=true` (so subtasks come back as their own tasks, the same way a Jira Sub-task issue used to show up in the same search).
 
 That fetch returns every task in the Space, from any folder. `CLICKUP_FOLDER_IDS` is an explicit, required allowlist — a comma-separated list of folder ("turma") IDs — that `pipeline._filter_allowed_folders` uses to drop any task whose folder isn't on the list, before `EtlService` ever sees it. It's deliberately an allowlist, not "every folder in the Space automatically": a folder unrelated to a "turma" could be added to the Space later, and it must not start feeding the pipeline, alerts, and reports just by existing there (see [`design-decisions.md`](design-decisions.md#23)).
 
-`CLICKUP_TEAM_ID` identifies the ClickUp Team (Workspace), and `CLICKUP_AREA_FIELD_ID` is the ID of the "Area" custom field (a `drop_down` field) used to route Teams alerts.
+`CLICKUP_TEAM_ID` identifies the ClickUp Team (Workspace).
 
 The **actual value of these IDs stays only in the local `.env`** and is not published to this repository. The `.env.example` brings only empty placeholders.
 

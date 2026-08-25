@@ -46,7 +46,6 @@ class Settings(BaseSettings):
         default=4, description="Days ahead that triggers a medium-priority alert"
     )
     WORKSPACE_NAME: str | None = None
-    CLICKUP_AREA_FIELD_ID: str
     WEBHOOK_TI: str
     WEBHOOK_SOP: str
     WEBHOOK_IA: str
