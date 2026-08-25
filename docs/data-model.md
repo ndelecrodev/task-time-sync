@@ -59,7 +59,7 @@ ClickUp).
 | `assignee` | `str` | `assignees[*].username`/`.email`, normalizados individualmente e concatenados com `", "` |
 | `priority` | `Priority` | `priority.priority` (`urgent`/`high`/`normal`/`low`), mapeado para o enum |
 | `status` | `str` | `status.status` |
-| `area` | `str \| None` | opção resolvida do custom field `drop_down` configurado em `CLICKUP_AREA_FIELD_ID` |
+| `area` | `str \| None` | `list.id` resolvido contra o mapeamento fixo `EtlService.CLICKUP_LIST_TO_AREA` |
 | `creation_date` | `date` | `date_created` (timestamp em milissegundos) |
 | `due_date` | `date \| None` | `due_date` (timestamp em milissegundos) |
 | `completion_date` | `date \| None` | `date_closed` (timestamp em milissegundos) |
@@ -78,13 +78,14 @@ o e-mail do **primeiro** assignee alimenta `assignee_email`, porque uma
 @menção do Teams só pode apontar para uma pessoa — ver
 [`design-decisions.md`](design-decisions.md#22).
 
-**Área (`drop_down` custom field):** o ClickUp devolve `custom_fields` como uma
-lista de objetos, cada um com `id`, `name`, `type` e, opcionalmente, `value`.
-Para o campo do tipo `drop_down` configurado em `CLICKUP_AREA_FIELD_ID`,
-`value` é um **índice** dentro do array `type_config.options` do próprio
-campo, não o texto da opção — o índice é resolvido contra esse array para
-obter o nome da área. Quando o campo está ausente, não tem chave `value`, ou o
-índice não resolve, o resultado é `NO_AREA`.
+**Área (mapeamento por lista do ClickUp):** `area` vem de `task["list"]["id"]`,
+resolvido contra o dicionário fixo `EtlService.CLICKUP_LIST_TO_AREA`
+(list_id -> área), com exatamente uma entrada por lista do ClickUp que
+representa uma disciplina do curso. Quando o `id` da lista não está no
+dicionário — por exemplo, uma lista nova criada numa pasta já permitida, mas
+ainda sem área atribuída — o resultado é `NO_AREA`, o mesmo sentinela usado
+antes para o campo customizado não preenchido. Ver
+[`design-decisions.md`](design-decisions.md#24).
 
 **Milissegundos:** `date_created`, `due_date`, `date_closed` e `date_updated`
 chegam como strings de timestamp Unix em milissegundos (ex.:
