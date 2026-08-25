@@ -33,6 +33,23 @@ CLICKUP_PRIORITY_MAP = {
 # and every already-converted record is thrown away with it.
 RECORD_ERRORS = (ValidationError, KeyError, AttributeError, TypeError, ValueError)
 
+# ClickUp list ("Sprint") id -> area, using the same vocabulary as
+# settings.teams_webhooks' keys. Keys are strings because task["list"]["id"]
+# comes back as a string in the raw payload, same as task["folder"]["id"]
+# (see pipeline._filter_allowed_folders, compared against the also-string
+# CLICKUP_FOLDER_IDS). This is a curriculum/business mapping, not a
+# per-environment setting — see design-decisions.md.
+CLICKUP_LIST_TO_AREA = {
+    "901715802295": "front-end",  # Desenvolvimento 1
+    "901715802315": "back-end",  # POO
+    "901715802329": "back-end",  # Lógica de Programação
+    "901715802335": "design",  # UX
+    "901715802357": "ia",  # Introdução à Inteligência Artificial
+    "901715802434": "sop",  # Sistemas Operacinais
+    "901716215806": "ti",  # Projetos
+    "901715802403": "data",  # Banco de Dados 1
+}
+
 
 class EtlService:
     """Converts raw API payloads into :mod:`sop_pipeline.models` objects.
@@ -42,8 +59,7 @@ class EtlService:
     """
 
     def __init__(self) -> None:
-        """Read the configurable ClickUp custom-field ID and load employee mappings."""
-        self.clickup_area_field_id = settings.CLICKUP_AREA_FIELD_ID
+        """Load employee mappings."""
         self.employee_registry = settings.load_employee_registry()
         self._unmapped_employees_warned: set[str] = set()
 
@@ -161,7 +177,7 @@ class EtlService:
             assignee=assignee,
             priority=priority,
             status=(raw_task.get("status") or {}).get("status"),
-            area=self._resolve_area(raw_task.get("custom_fields") or []),
+            area=self._resolve_area(raw_task.get("list") or {}),
             creation_date=self._parse_millis_to_date(raw_task["date_created"]),
             due_date=self._parse_millis_to_date(raw_task.get("due_date")),
             completion_date=self._parse_millis_to_date(raw_task.get("date_closed")),
@@ -173,34 +189,20 @@ class EtlService:
             turma=raw_task["folder"]["name"],
         )
 
-    def _resolve_area(self, custom_fields: list[dict]) -> str:
-        """Resolve the configured area custom field to its option label.
-
-        ClickUp returns ``custom_fields`` as a list of field objects rather than
-        a direct dict lookup like Jira's. For a ``drop_down`` field, ``value`` is
-        an index into that field's own ``type_config.options`` array, not the
-        label text, so the index has to be resolved against that array.
+    @staticmethod
+    def _resolve_area(task_list: dict) -> str:
+        """Resolve a task's area from the ClickUp list it belongs to.
 
         Args:
-            custom_fields: The task's ``custom_fields`` list.
+            task_list: The task's ``list`` object.
 
         Returns:
-            str: The area option's name, or :data:`NO_AREA` when the field is
-            absent, has no ``value`` key, or the index doesn't resolve.
+            str: The area mapped to this list's id in
+            :data:`CLICKUP_LIST_TO_AREA`, or :data:`NO_AREA` when the list id
+            is absent or isn't in the mapping — e.g. a list that exists in an
+            allowed folder but was never assigned an area.
         """
-        for field in custom_fields:
-            if field.get("id") != self.clickup_area_field_id:
-                continue
-            if "value" not in field:
-                return NO_AREA
-            value = field.get("value")
-            if value is None:
-                return NO_AREA
-            options = (field.get("type_config") or {}).get("options") or []
-            if not isinstance(value, int) or not 0 <= value < len(options):
-                return NO_AREA
-            return options[value].get("name") or NO_AREA
-        return NO_AREA
+        return CLICKUP_LIST_TO_AREA.get(task_list.get("id"), NO_AREA)
 
     @staticmethod
     def transform_details(raw_tasks: list[dict]) -> list[TaskDetail]:
