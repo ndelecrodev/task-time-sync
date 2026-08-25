@@ -11,7 +11,7 @@ class SopPipelineError(Exception):
 
 
 class TaskValidationError(SopPipelineError):
-    """Raised when a Jira issue cannot be converted into a valid ``Task``."""
+    """Raised when a ClickUp task cannot be converted into a valid ``Task``."""
 
 
 class ExcelWriteError(SopPipelineError):
