@@ -394,11 +394,30 @@ the same with "Jira" swapped for "ClickUp".
 Identifiers that are **data**, not code — the `funcionarios.jira_email`
 column in Postgres, the `jira_email` header on the Excel `DIM_FUNCIONARIO`
 tab, and the `EmployeeMapping.jira_email` field that mirrors both — were
-deliberately kept under their old name, for the same reason as decision 6:
+initially kept under their old name, for the same reason as decision 6:
 renaming them would break the runtime match against the schema already
 deployed in Supabase and against the real spreadsheet, with no import error
 to warn about it. Only the `EmployeeRegistry.get_jira_email` method was
-renamed (decision 21), because it is code, not data.
+renamed at that point (decision 21), because it is code, not data.
+
+**Later rename of `jira_email` to `clickup_email`:** in a follow-up task, the
+three data identifiers above were in fact renamed — the `funcionarios.jira_email`
+column and its `check_email_jira` check constraint in Postgres, the
+`jira_email` header on the Excel `DIM_FUNCIONARIO` tab, and the
+`EmployeeMapping.jira_email` field, all became `clickup_email` /
+`check_email_clickup`. The reasoning: unlike the code rename in decision 21
+(deferred until the symbol itself stopped making sense), keeping a data
+identifier named `jira_email` indefinitely — now that the project no longer
+talks to Jira at all — was the kind of name that needlessly confuses the
+next person reading the schema, with no real compatibility benefit: the
+column and header could be renamed atomically and deliberately (a Postgres
+schema migration, a manual header update in Excel via Claude for Excel, and
+the matching Python-side field), unlike an uncoordinated silent rename. The
+chosen name, `clickup_email`, follows the convention already used by the
+sibling `clockify_email` column — naming after the concrete integrated
+system rather than a generic term like "task_source_email" — and matches
+the pattern of the `CLICKUP_*` identifiers already present in `Settings` and
+the `clients/clickup_client.py` module.
 
 **Multiple assignees, and the @mention trade-off:** unlike Jira, ClickUp
 allows more than one assignee per task. Each assignee is normalized

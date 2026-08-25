@@ -113,7 +113,7 @@ class Settings(BaseSettings):
         for employee in employees:
             mapping = EmployeeMapping(
                 canonical_name=employee.canonical_name,
-                jira_email=employee.jira_email,
+                clickup_email=employee.clickup_email,
                 clockify_email=employee.clockify_email,
             )
             mappings.append(mapping)

@@ -336,7 +336,7 @@ class ExcelWriter:
     def _write_duplicate_row(worksheet, row: int, duplicate: dict) -> None:
         """Write one removed-duplicate record onto a row.
 
-        This sheet has a fixed four-column layout (nome, jira_email,
+        This sheet has a fixed four-column layout (nome, clickup_email,
         clockify_email, motivo), so the columns are addressed by position
         instead of through a header map.
 
@@ -346,7 +346,7 @@ class ExcelWriter:
             duplicate: The duplicate record to write.
         """
         worksheet.cell(row=row, column=1, value=duplicate["nome"])
-        worksheet.cell(row=row, column=2, value=duplicate["jira_email"])
+        worksheet.cell(row=row, column=2, value=duplicate["clickup_email"])
         worksheet.cell(row=row, column=3, value=duplicate["clockify_email"])
         worksheet.cell(row=row, column=4, value=duplicate["reason"])
 

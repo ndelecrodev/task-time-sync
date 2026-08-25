@@ -42,20 +42,20 @@ class EmployeeDataSyncService:
         Returns:
             tuple[list[dict], list[dict]]: The unique rows, then the duplicates.
         """
-        seen_jira_emails = set()
+        seen_clickup_emails = set()
         seen_clockify_emails = set()
         unique_rows = []
         duplicate_rows = []
 
         for row in rows:
-            jira = row["jira_email"]
+            clickup = row["clickup_email"]
             clockify = row["clockify_email"]
 
-            if jira in seen_jira_emails or clockify in seen_clockify_emails:
-                row["reason"] = f"E-mail já foi cadastrado: {jira} ou {clockify}"
+            if clickup in seen_clickup_emails or clockify in seen_clockify_emails:
+                row["reason"] = f"E-mail já foi cadastrado: {clickup} ou {clockify}"
                 duplicate_rows.append(row)
             else:
-                seen_jira_emails.add(jira)
+                seen_clickup_emails.add(clickup)
                 seen_clockify_emails.add(clockify)
                 unique_rows.append(row)
 
@@ -73,7 +73,7 @@ class EmployeeDataSyncService:
         for row in unique_rows:
             self.postgres_client.upsert_employee(
                 canonical_name=row["nome"],
-                jira_email=row["jira_email"],
+                clickup_email=row["clickup_email"],
                 clockify_email=row["clockify_email"],
                 photo_url=row["photo_url"],
             )

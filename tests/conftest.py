@@ -80,12 +80,12 @@ def employee_mappings() -> list[EmployeeMapping]:
     return [
         EmployeeMapping(
             canonical_name="Alice Silva",
-            jira_email="alice.jira@example.com",
+            clickup_email="alice.jira@example.com",
             clockify_email="alice.clockify@example.com",
         ),
         EmployeeMapping(
             canonical_name="Bob Souza",
-            jira_email="bob.jira@example.com",
+            clickup_email="bob.jira@example.com",
             clockify_email="bob.clockify@example.com",
         ),
     ]

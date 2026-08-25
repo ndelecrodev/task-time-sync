@@ -423,12 +423,31 @@ decisão de [arquitetura](architecture.md#camadas): "nenhum client conhece o
 
 Identificadores que são **dados**, não código — a coluna `funcionarios.jira_email`
 no Postgres, o cabeçalho `jira_email` na aba `DIM_FUNCIONARIO` do Excel, e o
-campo `EmployeeMapping.jira_email` que espelha os dois — foram deliberadamente
+campo `EmployeeMapping.jira_email` que espelha os dois — foram inicialmente
 mantidos com o nome antigo, pela mesma razão da decisão 6: renomeá-los
 quebraria o casamento em runtime contra o schema já implantado no Supabase e
 contra a planilha real, sem erro de importação para avisar. Só o método
-`EmployeeRegistry.get_jira_email` foi renomeado (decisão 21), por ser código,
-não dado.
+`EmployeeRegistry.get_jira_email` foi renomeado nesse momento (decisão 21),
+por ser código, não dado.
+
+**Renomeação posterior de `jira_email` para `clickup_email`:** numa tarefa
+seguinte, os três identificadores de dados acima foram de fato renomeados —
+a coluna `funcionarios.jira_email` e sua check constraint `check_email_jira`
+no Postgres, o cabeçalho `jira_email` na aba `DIM_FUNCIONARIO` do Excel, e o
+campo `EmployeeMapping.jira_email`, todos passaram a `clickup_email` /
+`check_email_clickup`. A justificativa: diferente do rename de código feito
+na decisão 21 (adiado até o próprio símbolo deixar de fazer sentido), manter
+um identificador de dados chamado `jira_email` por tempo indefinido — agora
+que o projeto não fala mais com o Jira — era o tipo de nome que confunde
+sem necessidade a próxima pessoa que ler o schema, sem nenhum benefício de
+compatibilidade real: a coluna e o cabeçalho podiam ser renomeados atômica e
+deliberadamente (migração de schema no Postgres, atualização manual do
+cabeçalho no Excel via Claude for Excel, e o campo Python correspondente),
+ao contrário de uma renomeação silenciosa e não coordenada. O nome escolhido,
+`clickup_email`, segue a convenção já usada pela coluna irmã
+`clockify_email` — nomear pelo sistema concreto integrado, não por um termo
+genérico como "task_source_email" — e é o mesmo padrão dos identificadores
+`CLICKUP_*` já presentes em `Settings` e do módulo `clients/clickup_client.py`.
 
 **Múltiplos responsáveis, e o trade-off do @mention:** diferente do Jira, o
 ClickUp permite mais de um assignee por tarefa. Cada assignee é normalizado

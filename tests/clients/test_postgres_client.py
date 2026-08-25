@@ -69,7 +69,7 @@ def test_upsert_employee_inserts_when_absent() -> None:
     added = session.add.call_args.args[0]
     assert isinstance(added, Funcionarios)
     assert added.canonical_name == "Alice Silva"
-    assert added.jira_email == "alice.jira@example.com"
+    assert added.clickup_email == "alice.jira@example.com"
     assert added.photo_url == "https://storage.example.com/alice.jpg"
     session.commit.assert_called_once()
 
@@ -78,7 +78,7 @@ def test_upsert_employee_updates_existing_without_inserting() -> None:
     """A matching row is updated in place; nothing new is added (scenario #7)."""
     existing = SimpleNamespace(
         canonical_name="Old Name",
-        jira_email="old.jira@example.com",
+        clickup_email="old.jira@example.com",
         clockify_email="old.ck@example.com",
         photo_url="https://storage.example.com/old.jpg",
     )
@@ -92,7 +92,7 @@ def test_upsert_employee_updates_existing_without_inserting() -> None:
         )
 
     assert existing.canonical_name == "New Name"
-    assert existing.jira_email == "new.jira@example.com"
+    assert existing.clickup_email == "new.jira@example.com"
     assert existing.photo_url == "https://storage.example.com/new.jpg"
     session.add.assert_not_called()
     session.commit.assert_called_once()
