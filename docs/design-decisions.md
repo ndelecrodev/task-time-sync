@@ -513,3 +513,44 @@ que aconteceu em outro sistema (o Jira antes, o ClickUp agora).
 adicionar o ID da nova pasta a `CLICKUP_FOLDER_IDS` e reiniciar a execução
 agendada. Não há descoberta automática de novas turmas. Esse atrito é
 proposital — é o preço de nunca incluir uma pasta por engano.
+
+## 24. `area` passou do campo customizado `drop_down`, preenchido manualmente, para um mapeamento fixo de lista do ClickUp
+
+Antes, `area` vinha de um campo customizado `drop_down` do ClickUp
+(`CLICKUP_AREA_FIELD_ID`), preenchido tarefa por tarefa por quem criava ou
+gerenciava a tarefa. Esse mecanismo foi removido por completo: `_build_task`
+agora lê `task["list"]["id"]` e resolve contra `EtlService.CLICKUP_LIST_TO_AREA`,
+um dicionário fixo com uma entrada por lista do ClickUp que representa uma
+disciplina do curso (ex.: `"901715802295": "front-end"` para a lista
+"Desenvolvimento 1"). Quando o `id` da lista não está no dicionário, o
+resultado é `NO_AREA`, o mesmo sentinela usado antes para o campo não
+preenchido.
+
+**Por quê:** o campo customizado dependia de alguém lembrar de preenchê-lo em
+cada tarefa, e na prática quase ninguém preenchia — a esmagadora maioria das
+tarefas chegava ao relatório com `NO_AREA`, esvaziando o propósito de ter uma
+área por tarefa. A lista do ClickUp em que a tarefa já vive, por outro lado,
+corresponde 1:1 a uma disciplina do curso e é um dado que a tarefa já carrega
+de qualquer forma — não depende de nenhuma ação humana extra por tarefa. Mover
+a resolução de área para esse dado elimina a fonte do problema em vez de
+lembrar as pessoas de preencher um campo.
+
+Por que um dicionário Python fixo em vez de uma variável em `.env`, ao
+contrário de `CLICKUP_FOLDER_IDS`: `CLICKUP_LIST_TO_AREA` é uma regra de
+currículo/negócio amarrada à estrutura de listas deste programa específico —
+quais listas existem e a que disciplina cada uma corresponde é algo que muda
+tão raramente quanto o próprio currículo, e faz parte da lógica de negócio do
+pipeline, não de uma credencial ou de um escopo que varia por ambiente.
+`CLICKUP_FOLDER_IDS` continua em `.env` porque, ao contrário disso, ele varia
+genuinamente conforme o que está sendo sincronizado (que turmas estão ativas
+agora), o que é justamente o tipo de coisa que uma variável de ambiente existe
+para capturar.
+
+**Trade-off:** a mesma categoria de atrito deliberado da decisão 23. Uma nova
+lista criada numa pasta já permitida, sem uma entrada correspondente em
+`CLICKUP_LIST_TO_AREA`, cai silenciosamente em `NO_AREA` até alguém atualizar
+o dicionário. Não há descoberta automática de área a partir do nome da lista
+ou de qualquer outro sinal — atualizar o mapeamento é um ato manual e
+consciente, na mesma linha da allowlist de pastas: mudar o que o pipeline
+reconhece deve ser deliberado, não um efeito colateral de uma lista nova
+aparecer no ClickUp.
