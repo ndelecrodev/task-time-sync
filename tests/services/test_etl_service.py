@@ -17,6 +17,7 @@ from sop_pipeline.services.etl_service import (
     UNKNOWN_EMAIL,
     EtlService,
 )
+from tests.conftest import MAPPED_LIST_AREA, UNMAPPED_LIST_ID
 
 ETL_LOGGER = "sop_pipeline.services.etl_service"
 
@@ -309,69 +310,57 @@ def test_transform_tasks_discards_task_missing_folder(
     assert result == []
 
 
-# --- area custom field resolution -------------------------------------------------
+# --- area resolution (ClickUp list -> area mapping) -------------------------------
 
 
-def test_transform_tasks_resolves_drop_down_index_to_option_name(
+def test_transform_tasks_resolves_area_from_mapped_list(
     etl_service: EtlService, make_clickup_task
 ) -> None:
-    """The area field's numeric ``value`` is resolved to the option's name, index 0."""
+    """A task from a list on CLICKUP_LIST_TO_AREA resolves to that list's area."""
     result = etl_service.transform_tasks([make_clickup_task()])
 
-    assert result[0].area == "ti"
+    assert result[0].area == MAPPED_LIST_AREA
 
 
-def test_transform_tasks_resolves_drop_down_index_other_than_zero(
+def test_transform_tasks_resolves_area_for_another_mapped_list(
     etl_service: EtlService, make_clickup_task
 ) -> None:
-    """A non-zero index resolves to the matching option, not always the first one."""
-    task = make_clickup_task()
-    task["custom_fields"][0]["value"] = 3  # "back-end" in the fixture's option list
+    """A different mapped list id resolves to its own area, not always the same one."""
+    task = make_clickup_task(list={"id": "901715802315"})  # back-end (POO)
 
     result = etl_service.transform_tasks([task])
 
     assert result[0].area == "back-end"
 
 
-def test_transform_tasks_area_field_absent_uses_no_area(
+def test_transform_tasks_unmapped_list_id_uses_no_area(
     etl_service: EtlService, make_clickup_task
 ) -> None:
-    """A task whose custom_fields never includes the configured area field -> NO_AREA."""
-    result = etl_service.transform_tasks([make_clickup_task(custom_fields=[])])
-
-    assert result[0].area == NO_AREA
-
-
-def test_transform_tasks_area_field_without_value_key_uses_no_area(
-    etl_service: EtlService, make_clickup_task
-) -> None:
-    """A task whose area field is present but has never been set (no ``value`` key) -> NO_AREA."""
-    task = make_clickup_task()
-    del task["custom_fields"][0]["value"]
+    """A list id that exists but has no entry in CLICKUP_LIST_TO_AREA -> NO_AREA."""
+    task = make_clickup_task(list={"id": UNMAPPED_LIST_ID})
 
     result = etl_service.transform_tasks([task])
 
     assert result[0].area == NO_AREA
 
 
-def test_transform_tasks_area_field_null_value_uses_no_area(
+def test_transform_tasks_missing_list_id_uses_no_area(
     etl_service: EtlService, make_clickup_task
 ) -> None:
-    """A task whose area field value is explicitly null -> NO_AREA."""
-    task = make_clickup_task()
-    task["custom_fields"][0]["value"] = None
+    """A task whose list object has no id -> NO_AREA, not a crash."""
+    task = make_clickup_task(list={})
 
     result = etl_service.transform_tasks([task])
 
     assert result[0].area == NO_AREA
 
 
-def test_transform_tasks_area_field_index_out_of_range_uses_no_area(
+def test_transform_tasks_missing_list_key_uses_no_area(
     etl_service: EtlService, make_clickup_task
 ) -> None:
-    """An index that doesn't resolve against the field's own options -> NO_AREA."""
+    """A task with no ``list`` key at all -> NO_AREA, not a crash."""
     task = make_clickup_task()
-    task["custom_fields"][0]["value"] = 99
+    del task["list"]
 
     result = etl_service.transform_tasks([task])
 
