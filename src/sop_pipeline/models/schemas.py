@@ -175,6 +175,7 @@ class TaskDetail(BaseModel):
     task_id: str
     description: str | None = None
 
+
 class EmployeeMapping(BaseModel):
     """A single employee with their identifiers across ClickUp and Clockify.
 
