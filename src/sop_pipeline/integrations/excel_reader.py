@@ -3,10 +3,27 @@
 from openpyxl.utils import range_boundaries
 
 from sop_pipeline.integrations.excel_workbook import create_column_map, open_workbook
+from sop_pipeline.config.settings import settings
 
 
 class ExcelReader:
     """Reads sheets maintained by hand in the workbook."""
+
+    @staticmethod
+    def _fill_blank_emails(row: dict) -> dict:
+        """Replace blank email fields with the default anonymous email.
+
+        Args:
+            row: A row dictionary with email fields.
+
+        Returns:
+            dict: The row with blank emails replaced by the default anonymous email.
+        """
+        if not row.get("clickup_email") or row["clickup_email"] is None:
+            row["clickup_email"] = settings.DEFAULT_ANONYMOUS_EMAIL
+        if not row.get("clockify_email") or row["clockify_email"] is None:
+            row["clockify_email"] = settings.DEFAULT_ANONYMOUS_EMAIL
+        return row
 
     @staticmethod
     def read_employees(file_path: str) -> list[dict]:
@@ -18,9 +35,10 @@ class ExcelReader:
         Returns:
             list[dict]: One dict per row, keyed by column header.
         """
-        return ExcelReader.read_sheet_as_dicts(
+        rows = ExcelReader.read_sheet_as_dicts(
             file_path, sheet_name="DIM_FUNCIONARIO", table_name="dim_funcionario"
         )
+        return [ExcelReader._fill_blank_emails(row) for row in rows]
 
     @staticmethod
     def read_dim_employee_area(file_path: str) -> list[dict]:
