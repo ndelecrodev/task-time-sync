@@ -30,6 +30,7 @@ def _task(**overrides) -> Task:
         "status": "In Progress",
         "creation_date": date(2026, 1, 1),
         "task_type": TaskType.TASK,
+        "turma": "Primeiro Ano",
     }
     fields.update(overrides)
     return Task(**fields)

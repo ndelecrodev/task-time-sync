@@ -43,7 +43,7 @@ class AlertService:
         """Return how many days ahead a given priority starts alerting.
 
         Args:
-            priority: The task's priority value, as returned by Jira.
+            priority: The task's priority value.
 
         Returns:
             int | None: The window in days, or ``None`` for a priority that is not

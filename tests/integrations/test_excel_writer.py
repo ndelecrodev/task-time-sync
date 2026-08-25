@@ -25,6 +25,7 @@ COL_TITULO = 2
 COL_DIAS_RESTANTES = 13
 COL_ATRASADO = 14
 COL_STATUS_PRAZO = 15
+COL_TURMA = 16
 FORMULA_COLS = [COL_DIAS_RESTANTES, COL_ATRASADO, COL_STATUS_PRAZO]
 
 
@@ -42,6 +43,7 @@ def _task(task_id: str, title: str) -> Task:
         task_type=TaskType.TASK,
         creator="Carol Lima",
         update_date=date(2026, 1, 5),
+        turma="Primeiro Ano",
     )
 
 
@@ -91,6 +93,7 @@ def test_save_tasks_updates_existing_row_in_place(tasks_workbook_path: str) -> N
     worksheet = workbook["BASE_TAREFAS"]
     assert worksheet.cell(row=2, column=COL_ID).value == "ABC-1"
     assert worksheet.cell(row=2, column=COL_TITULO).value == "Updated title"
+    assert worksheet.cell(row=2, column=COL_TURMA).value == "Primeiro Ano"
     # No row appended: the table still ends at row 2.
     assert worksheet.tables["base_tarefas"].ref.endswith("2")
     assert worksheet.cell(row=3, column=COL_ID).value is None
@@ -105,6 +108,7 @@ def test_save_tasks_appends_new_row_and_copies_formulas(tasks_workbook_path: str
 
     assert worksheet.cell(row=3, column=COL_ID).value == "ABC-2"
     assert worksheet.cell(row=3, column=COL_TITULO).value == "Second task"
+    assert worksheet.cell(row=3, column=COL_TURMA).value == "Primeiro Ano"
     for column in FORMULA_COLS:
         template = worksheet.cell(row=2, column=column).value
         appended = worksheet.cell(row=3, column=column).value

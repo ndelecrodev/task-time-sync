@@ -1,4 +1,4 @@
-"""Transforms raw Jira and Clockify payloads into validated domain models."""
+"""Transforms raw ClickUp and Clockify payloads into validated domain models."""
 
 from datetime import date, datetime
 from logging import getLogger
@@ -9,7 +9,7 @@ from isodate import parse_duration
 from pydantic import ValidationError
 
 from sop_pipeline.config.settings import settings
-from sop_pipeline.models.schemas import Task, TaskDetail, TimeEntry
+from sop_pipeline.models.schemas import Task, TaskDetail, TaskType, TimeEntry
 
 logger = getLogger(__name__)
 
@@ -17,8 +17,18 @@ NO_RESPONSIBLE = "There is no one responsible."
 NO_AREA = "There is no one area."
 UNKNOWN_EMAIL = "email_desconhecido@desconhecido.com"
 
+# ClickUp's `priority.priority` labels, mapped onto the Priority enum's exact
+# label strings. Chosen 1:1 by severity: urgent is the most severe level ClickUp
+# offers, so it maps to Highest rather than High.
+CLICKUP_PRIORITY_MAP = {
+    "urgent": "Highest",
+    "high": "High",
+    "normal": "Medium",
+    "low": "Low",
+}
+
 # Errors that must cost a single record, never the whole batch. AttributeError and
-# TypeError belong here because an unexpected null in a Jira/Clockify payload
+# TypeError belong here because an unexpected null in a ClickUp/Clockify payload
 # surfaces as one of those, and without them a single bad record aborts the loop
 # and every already-converted record is thrown away with it.
 RECORD_ERRORS = (ValidationError, KeyError, AttributeError, TypeError, ValueError)
@@ -28,12 +38,12 @@ class EtlService:
     """Converts raw API payloads into :mod:`sop_pipeline.models` objects.
 
     Records that fail validation are logged and skipped rather than aborting the
-    whole run, so one malformed Jira issue never costs a full sync.
+    whole run, so one malformed ClickUp task never costs a full sync.
     """
 
     def __init__(self) -> None:
-        """Read the configurable Jira custom-field ID and load employee mappings."""
-        self.jira_customfield_area = settings.JIRA_CUSTOMFIELD_AREA
+        """Read the configurable ClickUp custom-field ID and load employee mappings."""
+        self.clickup_area_field_id = settings.CLICKUP_AREA_FIELD_ID
         self.employee_registry = settings.load_employee_registry()
         self._unmapped_employees_warned: set[str] = set()
 
@@ -44,7 +54,7 @@ class EtlService:
         canonical name. If not found, returns a visible sentinel value.
 
         Args:
-            identifier: A name, email, or None from Jira/Clockify.
+            identifier: A name, email, or None from ClickUp/Clockify.
 
         Returns:
             str | None: The canonical name, a sentinel value like "Unmapped
@@ -68,29 +78,29 @@ class EtlService:
 
         return f"Unmapped employee: {identifier}"
 
-    def transform_tasks(self, raw_issues: list) -> list[Task]:
-        """Convert raw Jira issues into :class:`Task` models.
+    def transform_tasks(self, raw_tasks: list) -> list[Task]:
+        """Convert raw ClickUp tasks into :class:`Task` models.
 
-        An issue that cannot be converted is discarded and reported at ERROR
-        level, since a discarded issue silently disappears from the report. The
-        most common cause is a priority or issue type that is not part of
-        :class:`Priority` / :class:`TaskType` — for example a new priority added
-        in Jira but never mirrored here.
+        A task that cannot be converted is discarded and reported at ERROR
+        level, since a discarded task silently disappears from the report. The
+        most common cause is a null or unrecognised priority — ClickUp's four
+        priority levels (urgent/high/normal/low) all map onto :class:`Priority`,
+        but a task with no priority set has nothing to map.
 
         Args:
-            raw_issues: Issue dicts as returned by ``JiraClient.fetch_tasks``.
+            raw_tasks: Task dicts as returned by ``ClickUpClient.fetch_tasks``.
 
         Returns:
-            list[Task]: The issues that validated successfully.
+            list[Task]: The tasks that validated successfully.
         """
         tasks = []
-        for issue in raw_issues:
+        for raw_task in raw_tasks:
             try:
-                tasks.append(self._build_task(issue))
+                tasks.append(self._build_task(raw_task))
             except RECORD_ERRORS as error:
                 logger.error(
-                    "Discarding Jira issue %s, it could not be converted: %s",
-                    issue.get("key", "???") if isinstance(issue, dict) else "???",
+                    "Discarding ClickUp task %s, it could not be converted: %s",
+                    raw_task.get("id", "???") if isinstance(raw_task, dict) else "???",
                     error,
                 )
                 sentry_sdk.capture_exception(error)
@@ -98,11 +108,11 @@ class EtlService:
 
         return tasks
 
-    def _build_task(self, issue: dict) -> Task:
-        """Convert a single raw Jira issue into a :class:`Task`.
+    def _build_task(self, raw_task: dict) -> Task:
+        """Convert a single raw ClickUp task into a :class:`Task`.
 
         Args:
-            issue: One issue dict from the Jira search endpoint.
+            raw_task: One task dict from the ClickUp list-tasks endpoint.
 
         Returns:
             Task: The validated task.
@@ -111,143 +121,133 @@ class EtlService:
             KeyError: If a field the pipeline depends on is absent.
             ValidationError: If a value does not satisfy the model.
         """
-        fields = issue["fields"]
+        assignees = raw_task["assignees"] or []
 
-        # An unassigned issue still belongs in the report, so a placeholder name
-        # is used rather than dropping the row.
-        if fields["assignee"] is None:
+        # An unassigned task still belongs in the report, so a placeholder name
+        # is used rather than dropping the row. ClickUp allows multiple
+        # assignees per task; each is normalized individually and the
+        # canonical names are joined into one comma-separated string, since
+        # Task.assignee is a single field.
+        if not assignees:
             assignee = NO_RESPONSIBLE
             assignee_email = None
         else:
-            assignee = fields["assignee"].get("displayName")
-            assignee_email = fields["assignee"].get("emailAddress")
+            canonical_names = [
+                self.normalize_employee_identifier(person.get("email") or person.get("username"))
+                for person in assignees
+            ]
+            assignee = ", ".join(canonical_names)
 
-        # Normalize the assignee to canonical name using the email if available,
-        # otherwise try the display name.
-        if assignee_email:
-            assignee = self.normalize_employee_identifier(assignee_email)
-        else:
-            assignee = self.normalize_employee_identifier(assignee)
-            # Jira Cloud's per-user email-visibility privacy settings (GDPR-era)
-            # can leave fields.assignee.emailAddress null even for a correctly
-            # assigned, visible user; fall back to the registry so outbound Teams
-            # @mentions still have an email. Never applies to an unassigned issue
-            # (fields["assignee"] is None), whose sentinel name isn't a real employee.
-            if fields["assignee"] is not None:
-                assignee_email = self.employee_registry.get_jira_email(assignee)
+            # A Teams @mention can only target one person, so only the first
+            # assignee's email is carried forward. ClickUp Cloud's per-user
+            # email-visibility settings can leave it null even for a correctly
+            # assigned, visible user; fall back to the registry so outbound
+            # Teams @mentions still have an email.
+            assignee_email = assignees[0].get("email")
+            if not assignee_email:
+                assignee_email = self.employee_registry.get_registered_email(canonical_names[0])
 
-        if fields[self.jira_customfield_area] is None:
-            area = NO_AREA
-        else:
-            area = fields[self.jira_customfield_area].get("value")
+        priority_label = (raw_task.get("priority") or {}).get("priority")
+        priority = CLICKUP_PRIORITY_MAP.get(priority_label) if priority_label else None
 
-        # Jira sends these as null rather than omitting them: `priority` when the
-        # project has no priority scheme, `creator` on some imported issues. The
-        # `or {}` keeps the lookup safe; a missing required value then fails as a
-        # ValidationError, which costs this one issue instead of the whole batch.
+        # No sentinel needed for turma: pipeline._filter_allowed_folders already
+        # discards every task without a folder on the CLICKUP_FOLDER_IDS
+        # allowlist before transform_tasks ever sees it, so a KeyError here would
+        # only mean genuinely malformed ClickUp data — handled like any other
+        # required field, by discarding this one record (see RECORD_ERRORS).
         return Task(
-            task_id=issue["key"],
-            title=fields.get("summary", "No title"),
+            task_id=raw_task["id"],
+            title=raw_task.get("name", "No title"),
             assignee=assignee,
-            priority=(fields.get("priority") or {}).get("name"),
-            status=(fields.get("status") or {}).get("name"),
-            area=area,
-            creation_date=self._parse_datetime_to_date(field=fields["created"]),
-            due_date=self._parse_date(raw_date=fields["duedate"]),
-            completion_date=self._parse_datetime_to_date(fields["resolutiondate"]),
-            task_type=(fields.get("issuetype") or {}).get("name"),
-            creator=(fields.get("creator") or {}).get("displayName"),
-            update_date=self._parse_datetime_to_date(field=fields["updated"]),
+            priority=priority,
+            status=(raw_task.get("status") or {}).get("status"),
+            area=self._resolve_area(raw_task.get("custom_fields") or []),
+            creation_date=self._parse_millis_to_date(raw_task["date_created"]),
+            due_date=self._parse_millis_to_date(raw_task.get("due_date")),
+            completion_date=self._parse_millis_to_date(raw_task.get("date_closed")),
+            task_type=TaskType.TASK,
+            creator=(raw_task.get("creator") or {}).get("username"),
+            update_date=self._parse_millis_to_date(raw_task.get("date_updated")),
             assignee_email=assignee_email,
-            tags=fields.get("labels", []),
+            tags=[tag.get("name") for tag in raw_task.get("tags", [])],
+            turma=raw_task["folder"]["name"],
         )
 
-    @staticmethod
-    def transform_details(raw_issues: list[dict]) -> list[TaskDetail]:
-        """Extract the plain-text description of each issue.
+    def _resolve_area(self, custom_fields: list[dict]) -> str:
+        """Resolve the configured area custom field to its option label.
+
+        ClickUp returns ``custom_fields`` as a list of field objects rather than
+        a direct dict lookup like Jira's. For a ``drop_down`` field, ``value`` is
+        an index into that field's own ``type_config.options`` array, not the
+        label text, so the index has to be resolved against that array.
 
         Args:
-            raw_issues: Issue dicts as returned by ``JiraClient.fetch_tasks``.
+            custom_fields: The task's ``custom_fields`` list.
 
         Returns:
-            list[TaskDetail]: One detail record per issue that validated.
+            str: The area option's name, or :data:`NO_AREA` when the field is
+            absent, has no ``value`` key, or the index doesn't resolve.
+        """
+        for field in custom_fields:
+            if field.get("id") != self.clickup_area_field_id:
+                continue
+            if "value" not in field:
+                return NO_AREA
+            value = field.get("value")
+            if value is None:
+                return NO_AREA
+            options = (field.get("type_config") or {}).get("options") or []
+            if not isinstance(value, int) or not 0 <= value < len(options):
+                return NO_AREA
+            return options[value].get("name") or NO_AREA
+        return NO_AREA
+
+    @staticmethod
+    def transform_details(raw_tasks: list[dict]) -> list[TaskDetail]:
+        """Extract the plain-text description of each task.
+
+        Args:
+            raw_tasks: Task dicts as returned by ``ClickUpClient.fetch_tasks``.
+
+        Returns:
+            list[TaskDetail]: One detail record per task that validated.
         """
         details = []
-        for issue in raw_issues:
+        for raw_task in raw_tasks:
             try:
-                task_id = issue["key"]
-                raw_description = issue["fields"].get("description")
-                if raw_description is None:
-                    description = None
-                else:
-                    description = EtlService._extract_description(raw_description).strip()
-
+                task_id = raw_task["id"]
+                description = raw_task.get("description") or raw_task.get("text_content")
                 details.append(TaskDetail(task_id=task_id, description=description))
             except RECORD_ERRORS as error:
                 logger.warning(
                     "Detail of task %s is invalid, skipping: %s",
-                    issue.get("key", "???") if isinstance(issue, dict) else "???",
+                    raw_task.get("id", "???") if isinstance(raw_task, dict) else "???",
                     error,
                 )
         return details
 
     @staticmethod
-    def _extract_description(node: dict) -> str:
-        """Flatten an Atlassian Document Format tree into plain text.
+    def _parse_millis_to_date(raw_millis: str | None) -> date | None:
+        """Convert a millisecond Unix-timestamp string into a local calendar date.
 
-        ADF descriptions are a nested tree of nodes; only leaf nodes carry a
-        ``text`` key, so the tree is walked recursively. Paragraph nodes get a
-        trailing newline to preserve the original line breaks.
-
-        Args:
-            node: An ADF node (the document root on the first call).
-
-        Returns:
-            str: The concatenated text of the whole subtree.
-        """
-        text = ""
-        if "text" in node.keys():
-            # The key can be present with a null value on some ADF marks; `or ""`
-            # keeps the concatenation from raising and losing every description.
-            text += node.get("text") or ""
-        elif "content" in node.keys():
-            for child in node["content"]:
-                if child.get("type") == "paragraph":
-                    text += EtlService._extract_description(child) + "\n"
-                else:
-                    text += EtlService._extract_description(child)
-        else:
-            text += "\n"
-        return text
-
-    @staticmethod
-    def _parse_date(raw_date: str | None) -> date | None:
-        """Parse a plain ISO date string (``YYYY-MM-DD``).
+        ClickUp reports its timestamp fields (``date_created``, ``due_date``,
+        ``date_closed``, ``date_updated``) as strings holding milliseconds since
+        the epoch, in UTC. Converting to America/Sao_Paulo before truncating to a
+        date matters for the same reason it does for Clockify entries (see
+        :meth:`_parse_utc_to_local_date`): a timestamp late in the evening in
+        Brazil can already fall on the next day in UTC.
 
         Args:
-            raw_date: The string to parse, or ``None``.
+            raw_millis: The millisecond-timestamp string, or ``None``.
 
         Returns:
-            date | None: The parsed date, or ``None`` when the input was ``None``.
+            date | None: The date in America/Sao_Paulo, or ``None`` when the
+            input was ``None``.
         """
-        if raw_date is None:
+        if raw_millis is None:
             return None
-        return date.fromisoformat(raw_date)
-
-    @staticmethod
-    def _parse_datetime_to_date(field: str | None) -> date | None:
-        """Parse an ISO datetime string and keep only its date part.
-
-        Args:
-            field: The datetime string to parse, or ``None``.
-
-        Returns:
-            date | None: The date part, or ``None`` when the input was ``None``.
-        """
-        if field is None:
-            return None
-        datetime_field = datetime.fromisoformat(field)
-        return datetime_field.date()
+        brazil_timezone = ZoneInfo("America/Sao_Paulo")
+        return datetime.fromtimestamp(int(raw_millis) / 1000, tz=brazil_timezone).date()
 
     @staticmethod
     def _parse_duration(duration_iso: str) -> float:
