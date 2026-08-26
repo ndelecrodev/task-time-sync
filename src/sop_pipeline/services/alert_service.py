@@ -3,6 +3,11 @@
 from sop_pipeline.config.settings import settings
 from sop_pipeline.models.schemas import Priority, Task
 
+# Segundo Ano tasks must never trigger a Teams alert (product decision, see
+# design-decisions.md). Named here rather than inlined so a third turma is
+# easy to find and add later.
+EXCLUDED_TURMA = "Segundo Ano"
+
 
 class AlertService:
     """Selects the tasks whose deadline is close enough to warrant a warning."""
@@ -24,6 +29,11 @@ class AlertService:
         """
         results = []
         for task in tasks:
+            # Segundo Ano is excluded from Teams alerts entirely; no reason to
+            # evaluate its urgency if it can never alert regardless of the result.
+            if task.turma == EXCLUDED_TURMA:
+                continue
+
             # A finished task never needs a deadline warning.
             if task.completion_date is not None:
                 continue
