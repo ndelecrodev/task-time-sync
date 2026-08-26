@@ -101,3 +101,21 @@ class EmployeeRegistry:
                 return employee.clickup_email
 
         return None
+
+    def get_teams_email(self, canonical_name: str) -> str | None:
+        """Resolve a canonical name to its registered Teams email, if any.
+
+        Args:
+            canonical_name: The employee's canonical name.
+
+        Returns:
+            str | None: The registered Teams email, or ``None`` if no employee
+            matches this name or the field is empty.
+        """
+        name_lower = canonical_name.lower()
+
+        for canonical, employee in self._by_canonical_name.items():
+            if canonical.lower() == name_lower:
+                return employee.teams_email or None
+
+        return None

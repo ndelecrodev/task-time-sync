@@ -579,3 +579,32 @@ exclusão fica isolada em `AlertService`, então `sync_clickup`, `ExcelWriter` e
 alertar no Teams), `EXCLUDED_TURMA` precisa virar uma coleção em vez de uma
 string única — hoje é deliberadamente a forma mais simples que atende
 exatamente ao caso presente.
+
+## 26. `teams_email` é um campo separado de `clickup_email`, não uma correção nele
+
+`funcionarios.teams_email` (e a coluna correspondente em `DIM_FUNCIONARIO`)
+guarda o e-mail que deve receber @menções do Teams, quando diferente de
+`clickup_email`; é `None` quando os dois coincidem.
+`EmployeeRegistry.get_teams_email` resolve esse campo a partir do nome
+canônico, e `EtlService._build_task` o consulta logo após resolver o
+assignee para seu nome canônico — em ambos os ramos do `if assignee_email: ...
+else: ...`, não só no de fallback. Quando o resultado não é `None`, ele
+sobrepõe `assignee_email` incondicionalmente: a prioridade final é
+`teams_email` (se definido) > e-mail do próprio ClickUp (se presente) >
+fallback de `EmployeeRegistry.get_registered_email` (decisão 21), nessa
+ordem.
+
+**Por quê:** `clickup_email` tem um papel de identidade — é contra ele (e
+`clockify_email`) que `EmployeeRegistry.resolve` casa um identificador bruto
+para chegar ao nome canônico de alguém; é o "quem é essa pessoa" do sistema.
+`teams_email` tem um papel completamente diferente: só importa para onde uma
+@menção do Teams deve apontar, depois que a identidade já foi resolvida. Os
+dois podem legitimamente divergir para a mesma pessoa — alguém pode
+autenticar no ClickUp com um e-mail e usar o Teams com outro, por motivos que
+não têm nada a ver com qual conta o representa no sistema. Corrigir
+`clickup_email` para "consertar" a @menção do Teams misturaria essas duas
+responsabilidades: quebraria a correspondência de identidade (e
+potencialmente a validação de e-mail único da decisão de duplicatas) para
+resolver um problema que é puramente de notificação. Manter os dois campos
+separados deixa cada um livre para mudar por sua própria razão, sem que um
+efeito colateral no outro.
