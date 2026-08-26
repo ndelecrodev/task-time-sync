@@ -48,6 +48,20 @@ CLICKUP_LIST_TO_AREA = {
     "901715802434": "sop",  # Sistemas Operacinais
     "901716215806": "ti",  # Projetos
     "901715802403": "data",  # Banco de Dados 1
+    # Segundo Ano. dad/mobile/eqs/devops/bi have no entry in
+    # settings.teams_webhooks on purpose — Segundo Ano tasks never reach the
+    # Teams alert path (see AlertService.EXCLUDED_TURMA), so no webhook is
+    # ever looked up for these areas.
+    "901715802576": "data",  # Modelagem de dados
+    "901715802657": "ia",  # IA
+    "901715802696": "front-end",  # Desenvolvimento 2
+    "901715802720": "data",  # Banco de Dados 2
+    "901715802775": "dad",  # DAD
+    "901715802792": "mobile",  # Mobile
+    "901715802817": "eqs",  # EQS
+    "901715802829": "devops",  # DEVOPS
+    "901715802839": "bi",  # BI
+    "901716191365": "design",  # UX
 }
 
 

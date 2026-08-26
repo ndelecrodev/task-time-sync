@@ -84,6 +84,13 @@ an already-allowed folder but never assigned an area yet — the result is
 `NO_AREA`, the same sentinel previously used for an unfilled custom field. See
 [`design-decisions.md`](design-decisions.md#24).
 
+`CLICKUP_LIST_TO_AREA` includes the 10 lists from the "Segundo Ano" folder,
+which introduced five new area values: `dad`, `mobile`, `eqs`, `devops`, and
+`bi`. None of them has a corresponding entry in `settings.teams_webhooks`,
+intentionally — since the "Segundo Ano" turma is excluded entirely from the
+Teams alert path (see [`design-decisions.md`](design-decisions.md#25)), none
+of these areas ever needs a webhook.
+
 **Milliseconds:** `date_created`, `due_date`, `date_closed`, and
 `date_updated` arrive as millisecond Unix-timestamp strings (e.g.
 `"1753401600000"`), not ISO 8601 like Jira's.
