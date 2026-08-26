@@ -269,6 +269,86 @@ def test_transform_tasks_unassigned_task_never_consults_registry_fallback(
     spy.assert_not_called()
 
 
+# --- teams_email priority ----------------------------------------------------------
+
+
+def test_transform_tasks_teams_email_overrides_clickup_own_email(
+    etl_service: EtlService, make_clickup_task
+) -> None:
+    """A registered teams_email wins even when ClickUp itself provided an email."""
+    with patch.object(
+        etl_service.employee_registry, "get_teams_email", return_value="alice.teams@example.com"
+    ):
+        result = etl_service.transform_tasks([make_clickup_task()])
+
+    assert result[0].assignee_email == "alice.teams@example.com"
+
+
+def test_transform_tasks_teams_email_overrides_when_clickup_gave_no_email(
+    etl_service: EtlService, make_clickup_task
+) -> None:
+    """A registered teams_email still wins when ClickUp provided no email at all.
+
+    Confirms teams_email is checked outside the no-email fallback branch, not
+    only inside it.
+    """
+    with patch.object(
+        etl_service.employee_registry, "get_teams_email", return_value="alice.teams@example.com"
+    ):
+        result = etl_service.transform_tasks(
+            [make_clickup_task(assignees=[{"username": "Alice Silva", "email": None}])]
+        )
+
+    assert result[0].assignee_email == "alice.teams@example.com"
+
+
+def test_transform_tasks_no_teams_email_uses_clickup_own_email(
+    etl_service: EtlService, make_clickup_task
+) -> None:
+    """No registered teams_email: ClickUp's own email is used, unchanged."""
+    with patch.object(
+        etl_service.employee_registry,
+        "get_teams_email",
+        wraps=etl_service.employee_registry.get_teams_email,
+    ) as spy:
+        result = etl_service.transform_tasks([make_clickup_task()])
+
+    assert result[0].assignee_email == "alice.jira@example.com"
+    spy.assert_called_once_with("Alice Silva")
+
+
+def test_transform_tasks_no_teams_email_falls_back_to_registry(
+    etl_service: EtlService, make_clickup_task
+) -> None:
+    """No registered teams_email and no ClickUp email: registry fallback is used, unchanged."""
+    with patch.object(
+        etl_service.employee_registry,
+        "get_teams_email",
+        wraps=etl_service.employee_registry.get_teams_email,
+    ):
+        result = etl_service.transform_tasks(
+            [make_clickup_task(assignees=[{"username": "Alice Silva", "email": None}])]
+        )
+
+    assert result[0].assignee_email == "alice.jira@example.com"
+
+
+def test_transform_tasks_unassigned_task_never_consults_teams_email(
+    etl_service: EtlService, make_clickup_task
+) -> None:
+    """A task with no assignees never calls get_teams_email, and does not crash."""
+    with patch.object(
+        etl_service.employee_registry,
+        "get_teams_email",
+        wraps=etl_service.employee_registry.get_teams_email,
+    ) as spy:
+        result = etl_service.transform_tasks([make_clickup_task(assignees=[])])
+
+    assert result[0].assignee == NO_RESPONSIBLE
+    assert result[0].assignee_email is None
+    spy.assert_not_called()
+
+
 # --- turma (ClickUp folder) --------------------------------------------------------
 
 

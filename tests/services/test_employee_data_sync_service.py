@@ -14,13 +14,20 @@ from sop_pipeline.services.employee_data_sync_service import EmployeeDataSyncSer
 SAVE_DUPLICATES = "sop_pipeline.services.employee_data_sync_service.ExcelWriter.save_duplicates"
 
 
-def _row(nome: str, clickup_email: str, clockify_email: str, photo_url: str | None = None) -> dict:
+def _row(
+    nome: str,
+    clickup_email: str,
+    clockify_email: str,
+    photo_url: str | None = None,
+    teams_email: str | None = None,
+) -> dict:
     """One employee row as ExcelReader.read_employees would return it."""
     return {
         "nome": nome,
         "clickup_email": clickup_email,
         "clockify_email": clockify_email,
         "photo_url": photo_url,
+        "teams_email": teams_email,
     }
 
 
@@ -56,6 +63,7 @@ def test_sync_upserts_only_first_of_duplicate_email(colliding_field: str) -> Non
         clickup_email=first["clickup_email"],
         clockify_email=first["clockify_email"],
         photo_url=first["photo_url"],
+        teams_email=first["teams_email"],
     )
     saved = save_duplicates.call_args.args[1]
     assert [row["nome"] for row in saved] == ["Alice Duplicate"]
