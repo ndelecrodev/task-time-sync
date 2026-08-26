@@ -554,3 +554,28 @@ ou de qualquer outro sinal — atualizar o mapeamento é um ato manual e
 consciente, na mesma linha da allowlist de pastas: mudar o que o pipeline
 reconhece deve ser deliberado, não um efeito colateral de uma lista nova
 aparecer no ClickUp.
+
+## 25. Tarefas de "Segundo Ano" são excluídas dos alertas do Teams, mas continuam em todo o resto do pipeline
+
+`AlertService.tasks_to_alert` descarta toda tarefa cujo `turma` seja
+`"Segundo Ano"` antes mesmo de avaliar sua janela de prazo — a comparação
+mora em `AlertService.EXCLUDED_TURMA`, uma constante nomeada, não um literal
+solto no meio do filtro. O critério é decisão do dono do produto: tarefas de
+"Segundo Ano" não devem gerar alerta no Teams, ponto. Nenhuma justificativa
+adicional é assumida aqui além dessa escolha.
+
+**Por quê a exclusão vive em `AlertService`, e não simplesmente deixando de
+buscar tarefas de "Segundo Ano"`:** ao contrário da decisão 23 (a allowlist de
+pastas do ClickUp), onde tarefas de pastas fora de `CLICKUP_FOLDER_IDS` não
+devem existir no sistema de jeito nenhum e por isso são cortadas já na busca,
+aqui o dado continua necessário em todo lugar — Excel, Postgres e dashboard
+precisam mostrar tarefas de "Segundo Ano" normalmente, só o caminho de alerta
+do Teams é afetado. Cortar na busca (como a allowlist de pastas faz) removeria
+a turma do sistema inteiro, não só do Teams — errado para esta regra. A
+exclusão fica isolada em `AlertService`, então `sync_clickup`, `ExcelWriter` e
+`PostgresClient` seguem exatamente como estavam, sem nenhuma mudança.
+
+**Trade-off:** se um dia surgir uma terceira turma com a mesma regra (nunca
+alertar no Teams), `EXCLUDED_TURMA` precisa virar uma coleção em vez de uma
+string única — hoje é deliberadamente a forma mais simples que atende
+exatamente ao caso presente.
