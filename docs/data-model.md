@@ -41,6 +41,14 @@ enviada ainda. `EmployeeDataSyncService` propaga o valor lido de `DIM_FUNCIONARI
 a cada sincronização; é esse campo que o dashboard de indicadores (repositório
 separado) consome para exibir a foto de cada pessoa.
 
+**E-mail do Teams:** `funcionarios.teams_email` guarda o e-mail que deve
+receber @menções do Teams, quando diferente de `clickup_email`, ou `None`
+quando os dois coincidem. Existe porque `clickup_email` às vezes não é o
+e-mail vinculado à conta do Microsoft Teams da pessoa, mesmo quando o ClickUp
+fornece um e-mail de assignee válido; quando preenchido para alguém,
+`EmployeeRegistry.get_teams_email` tem prioridade sobre qualquer outra fonte
+de e-mail em `_build_task` — ver [`design-decisions.md`](design-decisions.md#26).
+
 **Colaboradores não mapeados:** se um colaborador não é encontrado no registro,
 ele recebe um valor sentinela visível (`"Unmapped employee: <email>"`) em vez de
 ser descartado silenciosamente. Segue a decisão de design #8: um registro ruim
@@ -66,7 +74,7 @@ ClickUp).
 | `task_type` | `TaskType` | fixo em `TaskType.TASK` — ver [`design-decisions.md`](design-decisions.md#22) |
 | `creator` | `str \| None` | `creator.username` |
 | `update_date` | `date \| None` | `date_updated` (timestamp em milissegundos) |
-| `assignee_email` | `EmailStr \| None` | `assignees[0].email`, com fallback em `EmployeeRegistry.get_registered_email` |
+| `assignee_email` | `EmailStr \| None` | `EmployeeRegistry.get_teams_email` quando definido; senão `assignees[0].email`, com fallback em `EmployeeRegistry.get_registered_email` |
 | `tags` | `list[str]` | `tags[*].name` |
 | `turma` | `str` | `folder.name` — lido direto do ClickUp, nunca digitado por alguém; ver [`design-decisions.md`](design-decisions.md#23) |
 
@@ -209,7 +217,7 @@ colaboradores" acima).
 
 | Aba | Tabela | Papel |
 |---|---|---|
-| `DIM_FUNCIONARIO` | `dim_funcionario` | Cadastro de colaboradores (id_funcionario, nome, email), lido por `ExcelReader`. |
+| `DIM_FUNCIONARIO` | `dim_funcionario` | Cadastro de colaboradores (id_funcionario, nome, email, **teams_email**), lido por `ExcelReader`. |
 | `DIM_FUNCIONARIO_AREA` | `dim_func_area` | Dimensão de áreas (id_area, nome_area). |
 | `FATO_FUNCIONARIO_AREA` | `fato_funcionario` | Relação N:N entre colaborador e área. |
 | `CALCULOS` | `Tabela6` | Métricas por pessoa (tarefas, concluídas, atrasadas, horas, produtividade). |
@@ -245,7 +253,7 @@ gravação equivalente na aba correspondente do `.xlsx`.
 
 | Tabela | Papel | Upsert por |
 |---|---|---|
-| `funcionarios` | Identidade de colaboradores, sincronizada a partir de `DIM_FUNCIONARIO`. Inclui `photo_url`, a URL da foto usada pelo dashboard. | `upsert_employee` |
+| `funcionarios` | Identidade de colaboradores, sincronizada a partir de `DIM_FUNCIONARIO`. Inclui `photo_url`, a URL da foto usada pelo dashboard, e `teams_email`, que sobrepõe `clickup_email` especificamente para @menções do Teams quando os dois divergem (ver [`design-decisions.md`](design-decisions.md#26)). | `upsert_employee` |
 | `tarefas` | Uma linha por tarefa do ClickUp; `responsavel_id` é `NULL` quando o colaborador não foi mapeado. `arquivada_em` guarda o timestamp em que a tarefa deixou de aparecer na busca (`CLICKUP_SPACE_ID` + `CLICKUP_FOLDER_IDS`, `NULL` enquanto ativa); a linha nunca é apagada. `turma` guarda o nome da pasta do ClickUp (ver [`design-decisions.md`](design-decisions.md#23)), lido direto da API, nunca digitado por alguém. | `upsert_task` (arquivamento: `archive_missing_tasks`) |
 | `detalhes_tarefa` | Descrição longa de uma tarefa. | `upsert_task_detail` |
 | `horas` | Um apontamento de horas do Clockify; `funcionario_id` é `NULL` quando o colaborador não foi mapeado. | `upsert_time_entry` |
