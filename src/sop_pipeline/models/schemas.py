@@ -183,11 +183,14 @@ class EmployeeMapping(BaseModel):
         canonical_name: The normalized name used as the join key in the report.
         clickup_email: The email address that appears in ClickUp assignee records.
         clockify_email: The email address that appears in Clockify time entries.
+        teams_email: The email address that should receive Teams @mentions, when
+            it differs from clickup_email; ``None`` when not set.
     """
 
     canonical_name: str = Field(..., description="Normalized name for the report")
     clickup_email: EmailStr = Field(..., description="Email in ClickUp")
     clockify_email: EmailStr = Field(..., description="Email in Clockify")
+    teams_email: str | None = None
 
     def __hash__(self) -> int:
         """Make hashable for deduplication."""

@@ -41,6 +41,14 @@ URL of the employee's photo, or `None` when no photo has been uploaded yet.
 sync; this is the field the reporting dashboard (a separate repository)
 consumes to show each person's photo.
 
+**Teams email:** `funcionarios.teams_email` holds the email that should
+receive Teams @mentions, when it differs from `clickup_email`, or `None` when
+the two coincide. It exists because `clickup_email` is sometimes not the
+email linked to a person's Microsoft Teams account, even when ClickUp
+provides a valid assignee email; when set for a person,
+`EmployeeRegistry.get_teams_email` takes priority over every other email
+source in `_build_task` — see [`design-decisions.md`](design-decisions.md#26).
+
 **Unmapped employees:** if an employee is not found in the registry, they
 receive a visible sentinel value (`"Unmapped employee: <email>"`) instead of
 being dropped silently. This follows design decision #8: a single bad record
@@ -65,7 +73,7 @@ A normalized ClickUp task. Upsert key: `task_id` (ClickUp's `id`).
 | `task_type` | `TaskType` | fixed to `TaskType.TASK` — see [`design-decisions.md`](design-decisions.md#22) |
 | `creator` | `str \| None` | `creator.username` |
 | `update_date` | `date \| None` | `date_updated` (millisecond timestamp) |
-| `assignee_email` | `EmailStr \| None` | `assignees[0].email`, falling back to `EmployeeRegistry.get_registered_email` |
+| `assignee_email` | `EmailStr \| None` | `EmployeeRegistry.get_teams_email` when set; otherwise `assignees[0].email`, falling back to `EmployeeRegistry.get_registered_email` |
 | `tags` | `list[str]` | `tags[*].name` |
 | `turma` | `str` | `folder.name` — read straight from ClickUp, never user-entered; see [`design-decisions.md`](design-decisions.md#23) |
 
@@ -195,7 +203,7 @@ They exist in the file and are maintained manually or by formula.
 
 | Tab | Table | Role |
 |---|---|---|
-| `DIM_FUNCIONARIO` | `dim_funcionario` | Employee registry (id_funcionario, nome, email), read by `ExcelReader`. |
+| `DIM_FUNCIONARIO` | `dim_funcionario` | Employee registry (id_funcionario, nome, email, **teams_email**), read by `ExcelReader`. |
 | `DIM_FUNCIONARIO_AREA` | `dim_func_area` | Area dimension (id_area, nome_area). |
 | `FATO_FUNCIONARIO_AREA` | `fato_funcionario` | N:N relationship between employee and area. |
 | `CALCULOS` | `Tabela6` | Metrics per person (tasks, completed, overdue, hours, productivity). |
@@ -231,7 +239,7 @@ the corresponding `.xlsx` tab.
 
 | Table | Role | Upserted by |
 |---|---|---|
-| `funcionarios` | Employee identity, synced from `DIM_FUNCIONARIO`. Includes `photo_url`, the photo URL consumed by the dashboard. | `upsert_employee` |
+| `funcionarios` | Employee identity, synced from `DIM_FUNCIONARIO`. Includes `photo_url`, the photo URL consumed by the dashboard, and `teams_email`, which overrides `clickup_email` specifically for Teams @mentions when the two diverge (see [`design-decisions.md`](design-decisions.md#26)). | `upsert_employee` |
 | `tarefas` | One row per ClickUp task; `responsavel_id` is `NULL` when the employee could not be mapped. `arquivada_em` holds the timestamp when the task stopped appearing in the fetch (`CLICKUP_SPACE_ID` + `CLICKUP_FOLDER_IDS`, `NULL` while active); the row is never deleted. `turma` holds the ClickUp folder's name (see [`design-decisions.md`](design-decisions.md#23)), read straight from the API, never user-entered. | `upsert_task` (archiving: `archive_missing_tasks`) |
 | `detalhes_tarefa` | Long-form task description. | `upsert_task_detail` |
 | `horas` | One Clockify time entry; `funcionario_id` is `NULL` when the employee could not be mapped. | `upsert_time_entry` |
