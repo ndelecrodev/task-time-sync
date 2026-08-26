@@ -521,3 +521,28 @@ the dict. There's no automatic area discovery from the list's name or any
 other signal — updating the mapping is a manual, conscious act, the same way
 the folder allowlist works: changing what the pipeline recognizes should be
 deliberate, not a side effect of a new list showing up in ClickUp.
+
+## 25. "Segundo Ano" tasks are excluded from Teams alerts, but stay in everything else in the pipeline
+
+`AlertService.tasks_to_alert` drops every task whose `turma` is
+`"Segundo Ano"` before it ever evaluates that task's deadline window — the
+comparison lives in `AlertService.EXCLUDED_TURMA`, a named constant, not a
+bare literal buried in the filter. The rule is a product-owner decision:
+"Segundo Ano" tasks must not generate a Teams alert, period. No further
+justification is assumed here beyond that choice.
+
+**Why the exclusion lives in `AlertService`, rather than simply not fetching
+"Segundo Ano" tasks at all:** unlike decision 23 (the ClickUp folder
+allowlist), where tasks from folders outside `CLICKUP_FOLDER_IDS` shouldn't
+exist in the system at all and are therefore cut at the fetch step, here the
+data is still needed everywhere else — Excel, Postgres, and the dashboard all
+need to show "Segundo Ano" tasks normally; only the Teams alert path is
+affected. Cutting at the fetch step (the way the folder allowlist does) would
+remove the turma from the whole system, not just from Teams — wrong for this
+rule. The exclusion stays isolated inside `AlertService`, so `sync_clickup`,
+`ExcelWriter`, and `PostgresClient` are unchanged, exactly as they were.
+
+**Trade-off:** if a third turma ever needs the same rule (never alert on
+Teams), `EXCLUDED_TURMA` would need to become a collection instead of a single
+string — today it's deliberately the simplest shape that fits exactly the
+present case.
