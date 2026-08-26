@@ -52,6 +52,7 @@ class Funcionarios(Base):
         nullable=False,
     )
     photo_url = Column(String)
+    teams_email = Column(String(150))
 
 
 class Tarefas(Base):
@@ -173,7 +174,12 @@ class PostgresClient:
             return result.all()
 
     def upsert_employee(
-        self, canonical_name: str, clickup_email: str, clockify_email: str, photo_url: str | None
+        self,
+        canonical_name: str,
+        clickup_email: str,
+        clockify_email: str,
+        photo_url: str | None,
+        teams_email: str | None = None,
     ) -> None:
         """Insert or update an employee, matched by either email address.
 
@@ -184,6 +190,8 @@ class PostgresClient:
             clockify_email: The email address that appears in Clockify.
             photo_url: Public Supabase Storage URL for the employee's photo,
                 or ``None`` when no photo has been uploaded yet.
+            teams_email: The email address that should receive Teams
+                @mentions, or ``None`` when it is the same as clickup_email.
         """
         with Session(self.engine) as session:
             existing = session.scalars(
@@ -200,6 +208,7 @@ class PostgresClient:
                         clickup_email=clickup_email,
                         clockify_email=clockify_email,
                         photo_url=photo_url,
+                        teams_email=teams_email,
                     )
                 )
             else:
@@ -207,6 +216,7 @@ class PostgresClient:
                 existing.clickup_email = clickup_email
                 existing.clockify_email = clockify_email
                 existing.photo_url = photo_url
+                existing.teams_email = teams_email
 
             session.commit()
 

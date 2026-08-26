@@ -76,6 +76,7 @@ class EmployeeDataSyncService:
                 clickup_email=row["clickup_email"],
                 clockify_email=row["clockify_email"],
                 photo_url=row["photo_url"],
+                teams_email=row["teams_email"],
             )
 
         if duplicate_rows:

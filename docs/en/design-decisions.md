@@ -546,3 +546,32 @@ rule. The exclusion stays isolated inside `AlertService`, so `sync_clickup`,
 Teams), `EXCLUDED_TURMA` would need to become a collection instead of a single
 string — today it's deliberately the simplest shape that fits exactly the
 present case.
+
+## 26. `teams_email` is a separate field from `clickup_email`, not a correction to it
+
+`funcionarios.teams_email` (and the matching column in `DIM_FUNCIONARIO`)
+holds the email that should receive Teams @mentions, when it differs from
+`clickup_email`; it is `None` when the two coincide.
+`EmployeeRegistry.get_teams_email` resolves this field from the canonical
+name, and `EtlService._build_task` consults it right after resolving the
+assignee to their canonical name — in both branches of the `if
+assignee_email: ... else: ...`, not only the fallback one. When the result is
+not `None`, it overrides `assignee_email` unconditionally: the final priority
+is `teams_email` (if set) > ClickUp's own email (if present) > the
+`EmployeeRegistry.get_registered_email` fallback (decision 21), in that
+order.
+
+**Why:** `clickup_email` plays an identity role — it's what
+`EmployeeRegistry.resolve` matches a raw identifier against (alongside
+`clockify_email`) to reach someone's canonical name; it's the system's "who
+is this person." `teams_email` plays a completely different role: it only
+matters for where a Teams @mention should land, after identity has already
+been resolved. The two can legitimately diverge for the same person —
+someone might authenticate to ClickUp with one email and use Teams with
+another, for reasons that have nothing to do with which account represents
+them in the system. "Fixing" `clickup_email` to correct the Teams @mention
+would conflate these two responsibilities: it would break identity matching
+(and potentially the duplicate-detection decision's unique-email validation)
+to solve a problem that is purely about notifications. Keeping the two
+fields separate leaves each free to change for its own reason, without a
+side effect on the other.
