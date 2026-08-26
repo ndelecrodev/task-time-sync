@@ -87,6 +87,14 @@ ainda sem área atribuída — o resultado é `NO_AREA`, o mesmo sentinela usado
 antes para o campo customizado não preenchido. Ver
 [`design-decisions.md`](design-decisions.md#24).
 
+`CLICKUP_LIST_TO_AREA` inclui as 10 listas da pasta "Segundo Ano", que
+introduziram cinco valores de área novos: `dad`, `mobile`, `eqs`, `devops` e
+`bi`. Propositalmente, nenhum deles tem entrada correspondente em
+`settings.teams_webhooks` — como a turma "Segundo Ano" é excluída por
+completo do caminho de alerta do Teams (ver
+[`design-decisions.md`](design-decisions.md#25)), nenhuma dessas áreas jamais
+precisa de um webhook.
+
 **Milissegundos:** `date_created`, `due_date`, `date_closed` e `date_updated`
 chegam como strings de timestamp Unix em milissegundos (ex.:
 `"1753401600000"`), não em ISO 8601 como no Jira.

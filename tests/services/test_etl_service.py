@@ -367,6 +367,28 @@ def test_transform_tasks_missing_list_key_uses_no_area(
     assert result[0].area == NO_AREA
 
 
+def test_transform_tasks_resolves_area_for_a_segundo_ano_list(
+    etl_service: EtlService, make_clickup_task
+) -> None:
+    """A Segundo Ano list id resolves to its own area, same mapping as Primeiro Ano."""
+    task = make_clickup_task(list={"id": "901715802576"})  # data (Modelagem de dados)
+
+    result = etl_service.transform_tasks([task])
+
+    assert result[0].area == "data"
+
+
+def test_transform_tasks_resolves_area_for_another_segundo_ano_list(
+    etl_service: EtlService, make_clickup_task
+) -> None:
+    """A second Segundo Ano list id resolves to its own, previously-unused area."""
+    task = make_clickup_task(list={"id": "901715802775"})  # dad (DAD)
+
+    result = etl_service.transform_tasks([task])
+
+    assert result[0].area == "dad"
+
+
 # --- priority mapping ---------------------------------------------------------------
 
 
