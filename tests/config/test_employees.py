@@ -125,3 +125,30 @@ def test_get_registered_email_returns_none_for_unregistered_name(
 ) -> None:
     """A name absent from the registry resolves to None, not an exception."""
     assert employee_registry.get_registered_email("Stranger Person") is None
+
+
+def test_get_teams_email_returns_email_when_set() -> None:
+    """A person with a registered teams_email resolves to it, case-insensitively."""
+    mapping = EmployeeMapping(
+        canonical_name="Alice Silva",
+        clickup_email="alice.jira@example.com",
+        clockify_email="alice.clockify@example.com",
+        teams_email="alice.teams@example.com",
+    )
+    registry = EmployeeRegistry([mapping])
+
+    assert registry.get_teams_email("ALICE SILVA") == "alice.teams@example.com"
+
+
+def test_get_teams_email_returns_none_when_field_is_empty(
+    employee_registry: EmployeeRegistry,
+) -> None:
+    """A registered person with no teams_email set resolves to None."""
+    assert employee_registry.get_teams_email("Alice Silva") is None
+
+
+def test_get_teams_email_returns_none_for_unregistered_name(
+    employee_registry: EmployeeRegistry,
+) -> None:
+    """A name absent from the registry resolves to None, not an exception."""
+    assert employee_registry.get_teams_email("Stranger Person") is None

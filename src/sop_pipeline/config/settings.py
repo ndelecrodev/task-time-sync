@@ -118,6 +118,7 @@ class Settings(BaseSettings):
                 canonical_name=employee.canonical_name,
                 clickup_email=employee.clickup_email,
                 clockify_email=employee.clockify_email,
+                teams_email=employee.teams_email,
             )
             mappings.append(mapping)
 

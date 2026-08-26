@@ -177,6 +177,14 @@ class EtlService:
             if not assignee_email:
                 assignee_email = self.employee_registry.get_registered_email(canonical_names[0])
 
+            # teams_email, when registered for this person, always wins: it
+            # exists specifically because clickup_email is sometimes not the
+            # address linked to their Microsoft Teams account, so it overrides
+            # whatever assignee_email holds above regardless of source.
+            teams_email = self.employee_registry.get_teams_email(canonical_names[0])
+            if teams_email:
+                assignee_email = teams_email
+
         priority_label = (raw_task.get("priority") or {}).get("priority")
         priority = CLICKUP_PRIORITY_MAP.get(priority_label) if priority_label else None
 
