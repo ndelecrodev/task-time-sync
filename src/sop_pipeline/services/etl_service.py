@@ -28,9 +28,10 @@ CLICKUP_PRIORITY_MAP = {
     "low": "Low",
 }
 
-# ClickUp status types that mean the work is finished. Every status carries one
-# of "open", "unstarted", "custom", "done" or "closed"; the status name itself
-# is free text and differs per workspace, so the type is what gets compared.
+# ClickUp status types that mean the work is completed. Every status carries
+# one of "open", "unstarted", "custom", "done" or "closed"; the status name
+# itself is free text and differs per workspace, so the type is what gets
+# compared. Only "closed" fills date_closed, so "done" falls back to date_done.
 FINISHED_STATUS_TYPES = frozenset({"done", "closed"})
 
 # Errors that must cost a single record, never the whole batch. AttributeError and
@@ -185,6 +186,7 @@ class EtlService:
         if not assignees:
             assignee = NO_RESPONSIBLE
             assignee_email = None
+            canonical_names = []
         else:
             canonical_names = [
                 self.normalize_employee_identifier(person.get("email") or person.get("username"))
@@ -221,11 +223,18 @@ class EtlService:
         # ClickUp reports is only the immediate parent (e.g. "Backend").
         list_info = CLICKUP_LIST_MAP[raw_task["list"]["id"]]
 
-        # Only the alert rule reads this; completion_date stays tied to
-        # date_closed (see design-decisions.md). A missing status or type means
-        # "not finished", never a discarded task.
+        # Completion follows the task's CURRENT status type, so a reopened task
+        # loses its date even when ClickUp still sends an old date_closed or
+        # date_done. A missing status or type means "not completed", never a
+        # discarded task (see design-decisions.md).
         raw_status = raw_task.get("status")
         status_type = raw_status.get("type") if isinstance(raw_status, dict) else None
+        if status_type in FINISHED_STATUS_TYPES:
+            completion_date = self._parse_millis_to_date(
+                raw_task.get("date_closed") or raw_task.get("date_done")
+            )
+        else:
+            completion_date = None
 
         return Task(
             task_id=raw_task["id"],
@@ -236,14 +245,14 @@ class EtlService:
             area=list_info.area,
             creation_date=self._parse_millis_to_date(raw_task["date_created"]),
             due_date=self._parse_millis_to_date(raw_task.get("due_date")),
-            completion_date=self._parse_millis_to_date(raw_task.get("date_closed")),
+            completion_date=completion_date,
             task_type=TaskType.TASK,
             creator=(raw_task.get("creator") or {}).get("username"),
             update_date=self._parse_millis_to_date(raw_task.get("date_updated")),
             assignee_email=assignee_email,
             tags=[tag.get("name") for tag in raw_task.get("tags", [])],
             turma=list_info.turma,
-            status_is_done=status_type in FINISHED_STATUS_TYPES,
+            assignee_names=canonical_names,
         )
 
     @staticmethod

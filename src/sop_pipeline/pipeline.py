@@ -109,8 +109,16 @@ def sync_clickup(etl: EtlService, postgres_client: PostgresClient, name_to_id: d
     ExcelWriter.save_details(settings.TEMP_EXCEL_PATH, details)
 
     for task in tasks:
+        # task.assignee is the joined "A, B" string, never a key of name_to_id,
+        # so ids are resolved per name. responsavel_id stays the first
+        # assignee, the same person assignee_email targets in Teams; names
+        # that are not registered employees (the "Unmapped employee" sentinel)
+        # get no id and no link.
+        assignee_ids = [name_to_id[name] for name in task.assignee_names if name in name_to_id]
+        first_assignee_id = name_to_id.get(task.assignee_names[0]) if task.assignee_names else None
         try:
-            postgres_client.upsert_task(task=task, responsavel_id=name_to_id.get(task.assignee))
+            postgres_client.upsert_task(task=task, responsavel_id=first_assignee_id)
+            postgres_client.sync_task_assignees(task_id=task.task_id, funcionario_ids=assignee_ids)
             for tag_name in task.tags:
                 postgres_client.upsert_tag_and_link(task_id=task.task_id, tag_name=tag_name)
         except SQLAlchemyError as error:
