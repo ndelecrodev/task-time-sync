@@ -38,6 +38,12 @@ class AlertService:
             if task.completion_date is not None:
                 continue
 
+            # A task in a "done" or "closed" status is finished as far as
+            # alerts go, even before ClickUp fills date_closed (alerts only,
+            # see design-decisions.md).
+            if task.status_is_done:
+                continue
+
             # No due date means there is no window to compare against.
             if task.days_remaining is None:
                 continue

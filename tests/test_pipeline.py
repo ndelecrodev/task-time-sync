@@ -6,41 +6,165 @@ transforms. These prove two contracts: no detail is written for a task_id that
 not abort the loop or skip the Excel write (scenario #12).
 """
 
+import logging
 from unittest.mock import MagicMock, patch
 
+import pytest
 from sqlalchemy.exc import SQLAlchemyError
 
-from sop_pipeline.pipeline import _filter_allowed_folders, sync_clickup, sync_clockify
+from sop_pipeline.pipeline import _filter_allowed_lists, sync_clickup, sync_clockify
+from tests.conftest import UNMAPPED_LIST_ID
 
-# --- _filter_allowed_folders -------------------------------------------------------
+PIPELINE_LOGGER = "sop_pipeline.pipeline"
+
+# --- _filter_allowed_lists ---------------------------------------------------------
 
 
-def test_filter_allowed_folders_keeps_task_from_allowed_folder(make_clickup_task) -> None:
-    """A task whose folder id is on the CLICKUP_FOLDER_IDS allowlist passes through."""
+def test_filter_allowed_lists_keeps_task_from_mapped_list(make_clickup_task) -> None:
+    """A task whose list id is a key of CLICKUP_LIST_MAP passes through."""
     task = make_clickup_task()
 
-    result = _filter_allowed_folders([task])
+    result = _filter_allowed_lists([task])
 
     assert result == [task]
 
 
-def test_filter_allowed_folders_excludes_task_from_disallowed_folder(make_clickup_task) -> None:
-    """A task from a folder NOT on the allowlist is excluded before _build_task ever sees it."""
-    task = make_clickup_task(folder={"id": "some-other-folder", "name": "Not A Turma"})
+def test_filter_allowed_lists_keeps_primeiro_ano_task_in_sub_folder(make_clickup_task) -> None:
+    """Regression: the immediate parent folder ("Backend") no longer decides scope."""
+    task = make_clickup_task(
+        list={"id": "901715802315", "name": "POO"},
+        folder={"id": "901711573295", "name": "Backend"},
+    )
 
-    result = _filter_allowed_folders([task])
+    result = _filter_allowed_lists([task])
 
-    assert result == []
+    assert result == [task]
 
 
-def test_filter_allowed_folders_excludes_task_missing_folder(make_clickup_task) -> None:
-    """A task with no folder key at all is excluded rather than raising."""
+def test_filter_allowed_lists_drops_unmapped_list_with_warning(
+    make_clickup_task, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A task from a list outside CLICKUP_LIST_MAP is dropped, and the drop is logged."""
+    kept = make_clickup_task(task_id="ABC-1")
+    dropped = [
+        make_clickup_task(task_id="ABC-2", list={"id": UNMAPPED_LIST_ID, "name": "Nova lista"}),
+        make_clickup_task(task_id="ABC-3", list={"id": UNMAPPED_LIST_ID, "name": "Nova lista"}),
+    ]
+
+    with caplog.at_level(logging.WARNING, logger=PIPELINE_LOGGER):
+        result = _filter_allowed_lists([kept, *dropped])
+
+    assert result == [kept]
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "dropped 2 tasks from 1 lists" in warnings[0].getMessage()
+    assert f"{UNMAPPED_LIST_ID} (Nova lista)" in warnings[0].getMessage()
+
+
+def test_filter_allowed_lists_drops_task_missing_list(make_clickup_task) -> None:
+    """A task with no list key at all is dropped rather than raising."""
     task = make_clickup_task()
-    del task["folder"]
+    del task["list"]
 
-    result = _filter_allowed_folders([task])
+    result = _filter_allowed_lists([task])
 
     assert result == []
+
+
+def test_filter_allowed_lists_logs_nothing_when_all_kept(
+    make_clickup_task, caplog: pytest.LogCaptureFixture
+) -> None:
+    """No warning is emitted when every task is in scope."""
+    with caplog.at_level(logging.WARNING, logger=PIPELINE_LOGGER):
+        _filter_allowed_lists([make_clickup_task()])
+
+    assert not caplog.records
+
+
+# --- archive set and unarchiving ---------------------------------------------------
+
+
+def test_sync_clickup_archive_set_includes_in_scope_task_that_failed_validation(
+    etl_service, make_clickup_task
+) -> None:
+    """An in-scope task discarded by validation is still in the archive set.
+
+    The null-priority task is still active in ClickUp; only our own parsing
+    rejected it, so it must not be archived as if it had disappeared. A task
+    from a list outside CLICKUP_LIST_MAP is out of scope and must not be in it.
+    """
+    tasks = [
+        make_clickup_task(task_id="ABC-1"),
+        make_clickup_task(task_id="ABC-2", priority=None),
+        make_clickup_task(task_id="ABC-3", list={"id": UNMAPPED_LIST_ID, "name": "Outra"}),
+    ]
+    postgres_client = MagicMock()
+
+    with (
+        patch("sop_pipeline.pipeline.ClickUpClient") as clickup_cls,
+        patch("sop_pipeline.pipeline.ExcelWriter"),
+    ):
+        clickup_cls.return_value.fetch_tasks.return_value = tasks
+        result = sync_clickup(etl_service, postgres_client, {})
+
+    assert [task.task_id for task in result] == ["ABC-1"]
+    postgres_client.archive_missing_tasks.assert_called_once_with({"ABC-1", "ABC-2"})
+
+
+def test_sync_clickup_unarchives_reappearing_task_that_failed_validation(
+    etl_service, make_clickup_task, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An archived task back with priority null is unarchived but never upserted.
+
+    Unarchiving uses the same set as archiving (every in-scope raw id, before
+    validation), so a task ClickUp still returns is not left archived just
+    because our own parsing rejected it.
+    """
+    tasks = [
+        make_clickup_task(task_id="ABC-1"),
+        make_clickup_task(task_id="ABC-2", priority=None),
+    ]
+    postgres_client = MagicMock()
+    postgres_client.unarchive_seen_tasks.return_value = 1
+
+    with (
+        patch("sop_pipeline.pipeline.ClickUpClient") as clickup_cls,
+        patch("sop_pipeline.pipeline.ExcelWriter") as excel,
+        caplog.at_level(logging.INFO, logger=PIPELINE_LOGGER),
+    ):
+        clickup_cls.return_value.fetch_tasks.return_value = tasks
+        excel.unmark_archived_tasks.return_value = 1
+        sync_clickup(etl_service, postgres_client, {})
+
+    postgres_client.unarchive_seen_tasks.assert_called_once_with({"ABC-1", "ABC-2"})
+    assert excel.unmark_archived_tasks.call_args.args[1] == {"ABC-1", "ABC-2"}
+    upserted = [call.kwargs["task"].task_id for call in postgres_client.upsert_task.call_args_list]
+    assert upserted == ["ABC-1"]
+    saved = [task.task_id for task in excel.save_tasks.call_args.kwargs["tasks"]]
+    assert saved == ["ABC-1"]
+    assert "1 tasks unarchived in Postgres, 1 in Excel" in caplog.text
+
+
+def test_sync_clickup_skips_archiving_when_in_scope_fetch_is_empty(
+    etl_service, make_clickup_task, caplog: pytest.LogCaptureFixture
+) -> None:
+    """No in-scope task -> no archiving or unarchiving at all, and a WARNING says why."""
+    tasks = [make_clickup_task(task_id="ABC-1", list={"id": UNMAPPED_LIST_ID, "name": "Outra"})]
+    postgres_client = MagicMock()
+
+    with (
+        patch("sop_pipeline.pipeline.ClickUpClient") as clickup_cls,
+        patch("sop_pipeline.pipeline.ExcelWriter") as excel,
+        caplog.at_level(logging.WARNING, logger=PIPELINE_LOGGER),
+    ):
+        clickup_cls.return_value.fetch_tasks.return_value = tasks
+        sync_clickup(etl_service, postgres_client, {})
+
+    postgres_client.archive_missing_tasks.assert_not_called()
+    postgres_client.unarchive_seen_tasks.assert_not_called()
+    excel.mark_archived_tasks.assert_not_called()
+    excel.unmark_archived_tasks.assert_not_called()
+    assert "skipping archiving for this run" in caplog.text
 
 
 def test_sync_clickup_does_not_write_detail_for_discarded_task(

@@ -66,7 +66,7 @@ A normalized ClickUp task. Upsert key: `task_id` (ClickUp's `id`).
 | `assignee` | `str` | `assignees[*].username`/`.email`, each normalized individually and joined with `", "` |
 | `priority` | `Priority` | `priority.priority` (`urgent`/`high`/`normal`/`low`), mapped onto the enum |
 | `status` | `str` | `status.status` |
-| `area` | `str \| None` | `list.id` resolved against the fixed `EtlService.CLICKUP_LIST_TO_AREA` mapping |
+| `area` | `str \| None` | `list.id` resolved against the fixed `CLICKUP_LIST_MAP` mapping (`area` field) |
 | `creation_date` | `date` | `date_created` (millisecond timestamp) |
 | `due_date` | `date \| None` | `due_date` (millisecond timestamp) |
 | `completion_date` | `date \| None` | `date_closed` (millisecond timestamp) |
@@ -75,7 +75,7 @@ A normalized ClickUp task. Upsert key: `task_id` (ClickUp's `id`).
 | `update_date` | `date \| None` | `date_updated` (millisecond timestamp) |
 | `assignee_email` | `EmailStr \| None` | `EmployeeRegistry.get_teams_email` when set; otherwise `assignees[0].email`, falling back to `EmployeeRegistry.get_registered_email` |
 | `tags` | `list[str]` | `tags[*].name` |
-| `turma` | `str` | `folder.name` — read straight from ClickUp, never user-entered; see [`design-decisions.md`](design-decisions.md#23) |
+| `turma` | `str` | `list.id` resolved against the fixed `CLICKUP_LIST_MAP` mapping (`turma` field); `folder.name` is not used, see [`design-decisions.md`](design-decisions.md#23) |
 
 **Multiple assignees:** unlike Jira, ClickUp allows more than one assignee per
 task. Each is normalized individually by `normalize_employee_identifier` (by
@@ -85,14 +85,14 @@ names are joined into `assignee`. Only the **first** assignee's email feeds
 [`design-decisions.md`](design-decisions.md#22).
 
 **Area (ClickUp list mapping):** `area` comes from `task["list"]["id"]`,
-resolved against the fixed `EtlService.CLICKUP_LIST_TO_AREA` dict (list_id ->
-area), with exactly one entry per ClickUp list that represents a course
-subject. When the list's `id` isn't in the dict — e.g. a new list created in
-an already-allowed folder but never assigned an area yet — the result is
-`NO_AREA`, the same sentinel previously used for an unfilled custom field. See
+resolved against the fixed `CLICKUP_LIST_MAP` dict (list_id ->
+`ClickUpListInfo(area, turma)`), with exactly one entry per ClickUp list that
+represents a course subject. A list missing from the dict is dropped by
+`pipeline._filter_allowed_lists`, with a WARNING, before it reaches
+`EtlService`. See [`design-decisions.md`](design-decisions.md#23) and
 [`design-decisions.md`](design-decisions.md#24).
 
-`CLICKUP_LIST_TO_AREA` includes the 10 lists from the "Segundo Ano" folder,
+`CLICKUP_LIST_MAP` includes the 10 lists from the "Segundo Ano" folder,
 which introduced five new area values: `dad`, `mobile`, `eqs`, `devops`, and
 `bi`. None of them has a corresponding entry in `settings.teams_webhooks`,
 intentionally — since the "Segundo Ano" turma is excluded entirely from the
@@ -240,7 +240,7 @@ the corresponding `.xlsx` tab.
 | Table | Role | Upserted by |
 |---|---|---|
 | `funcionarios` | Employee identity, synced from `DIM_FUNCIONARIO`. Includes `photo_url`, the photo URL consumed by the dashboard, and `teams_email`, which overrides `clickup_email` specifically for Teams @mentions when the two diverge (see [`design-decisions.md`](design-decisions.md#26)). | `upsert_employee` |
-| `tarefas` | One row per ClickUp task; `responsavel_id` is `NULL` when the employee could not be mapped. `arquivada_em` holds the timestamp when the task stopped appearing in the fetch (`CLICKUP_SPACE_ID` + `CLICKUP_FOLDER_IDS`, `NULL` while active); the row is never deleted. `turma` holds the ClickUp folder's name (see [`design-decisions.md`](design-decisions.md#23)), read straight from the API, never user-entered. | `upsert_task` (archiving: `archive_missing_tasks`) |
+| `tarefas` | One row per ClickUp task; `responsavel_id` is `NULL` when the employee could not be mapped. `arquivada_em` holds the timestamp when the task stopped appearing in the fetch (`CLICKUP_SPACE_ID` + the lists in `CLICKUP_LIST_MAP`, `NULL` while active); the row is never deleted, and `unarchive_seen_tasks` clears the column when the task shows up again. `turma` comes from `CLICKUP_LIST_MAP` (see [`design-decisions.md`](design-decisions.md#23)), never user-entered. | `upsert_task` (archiving: `archive_missing_tasks`, `unarchive_seen_tasks`) |
 | `detalhes_tarefa` | Long-form task description. | `upsert_task_detail` |
 | `horas` | One Clockify time entry; `funcionario_id` is `NULL` when the employee could not be mapped. | `upsert_time_entry` |
 | `etiquetas` | Distinct tags assigned to tasks. | `upsert_tag_and_link` |

@@ -2,6 +2,7 @@
 
 from datetime import date, datetime
 from logging import getLogger
+from typing import NamedTuple
 from zoneinfo import ZoneInfo
 
 import sentry_sdk
@@ -27,41 +28,64 @@ CLICKUP_PRIORITY_MAP = {
     "low": "Low",
 }
 
+# ClickUp status types that mean the work is finished. Every status carries one
+# of "open", "unstarted", "custom", "done" or "closed"; the status name itself
+# is free text and differs per workspace, so the type is what gets compared.
+FINISHED_STATUS_TYPES = frozenset({"done", "closed"})
+
 # Errors that must cost a single record, never the whole batch. AttributeError and
 # TypeError belong here because an unexpected null in a ClickUp/Clockify payload
 # surfaces as one of those, and without them a single bad record aborts the loop
 # and every already-converted record is thrown away with it.
 RECORD_ERRORS = (ValidationError, KeyError, AttributeError, TypeError, ValueError)
 
-# ClickUp list ("Sprint") id -> area, using the same vocabulary as
-# settings.teams_webhooks' keys. Keys are strings because task["list"]["id"]
-# comes back as a string in the raw payload, same as task["folder"]["id"]
-# (see pipeline._filter_allowed_folders, compared against the also-string
-# CLICKUP_FOLDER_IDS). This is a curriculum/business mapping, not a
-# per-environment setting — see design-decisions.md.
-CLICKUP_LIST_TO_AREA = {
-    "901715802295": "front-end",  # Desenvolvimento 1
-    "901715802315": "back-end",  # POO
-    "901715802329": "back-end",  # Lógica de Programação
-    "901715802335": "design",  # UX
-    "901715802357": "ia",  # Introdução à Inteligência Artificial
-    "901715802434": "sop",  # Sistemas Operacinais
-    "901716215806": "ti",  # Projetos
-    "901715802403": "data",  # Banco de Dados 1
+PRIMEIRO_ANO = "Primeiro Ano"
+SEGUNDO_ANO = "Segundo Ano"
+
+
+class ClickUpListInfo(NamedTuple):
+    """What a ClickUp list means to the pipeline.
+
+    Attributes:
+        area: Area name, in the same vocabulary as ``settings.teams_webhooks``' keys.
+        turma: The turma the list belongs to ("Primeiro Ano", "Segundo Ano").
+    """
+
+    area: str
+    turma: str
+
+
+# ClickUp list ("Sprint") id -> area and turma. This is the pipeline's scope
+# allowlist: pipeline._filter_allowed_lists drops every task whose list id is
+# not a key here. Lists, not folders, because ClickUp only reports a task's
+# immediate parent folder, so a turma reorganized into sub-folders vanishes
+# from the payload while its list ids stay the same (see design-decisions.md).
+# Keys are strings because task["list"]["id"] comes back as a string in the
+# raw payload. This is a curriculum/business mapping, not a per-environment
+# setting.
+CLICKUP_LIST_MAP = {
+    "901715802295": ClickUpListInfo("front-end", PRIMEIRO_ANO),  # Desenvolvimento 1
+    "901715802315": ClickUpListInfo("back-end", PRIMEIRO_ANO),  # POO
+    "901715802329": ClickUpListInfo("back-end", PRIMEIRO_ANO),  # Lógica de Programação
+    "901715802335": ClickUpListInfo("design", PRIMEIRO_ANO),  # UX
+    "901715802357": ClickUpListInfo("ia", PRIMEIRO_ANO),  # Introdução à Inteligência Artificial
+    "901715802434": ClickUpListInfo("sop", PRIMEIRO_ANO),  # Sistemas Operacionais
+    "901716215806": ClickUpListInfo("ti", PRIMEIRO_ANO),  # Projetos
+    "901715802403": ClickUpListInfo("data", PRIMEIRO_ANO),  # Banco de Dados 1
     # Segundo Ano. dad/mobile/eqs/devops/bi have no entry in
     # settings.teams_webhooks on purpose — Segundo Ano tasks never reach the
     # Teams alert path (see AlertService.EXCLUDED_TURMA), so no webhook is
     # ever looked up for these areas.
-    "901715802576": "data",  # Modelagem de dados
-    "901715802657": "ia",  # IA
-    "901715802696": "front-end",  # Desenvolvimento 2
-    "901715802720": "data",  # Banco de Dados 2
-    "901715802775": "dad",  # DAD
-    "901715802792": "mobile",  # Mobile
-    "901715802817": "eqs",  # EQS
-    "901715802829": "devops",  # DEVOPS
-    "901715802839": "bi",  # BI
-    "901716191365": "design",  # UX
+    "901715802576": ClickUpListInfo("data", SEGUNDO_ANO),  # Modelagem de dados
+    "901715802657": ClickUpListInfo("ia", SEGUNDO_ANO),  # IA
+    "901715802696": ClickUpListInfo("front-end", SEGUNDO_ANO),  # Desenvolvimento 2
+    "901715802720": ClickUpListInfo("data", SEGUNDO_ANO),  # Banco de Dados 2
+    "901715802775": ClickUpListInfo("dad", SEGUNDO_ANO),  # DAD
+    "901715802792": ClickUpListInfo("mobile", SEGUNDO_ANO),  # Mobile
+    "901715802817": ClickUpListInfo("eqs", SEGUNDO_ANO),  # EQS
+    "901715802829": ClickUpListInfo("devops", SEGUNDO_ANO),  # DEVOPS
+    "901715802839": ClickUpListInfo("bi", SEGUNDO_ANO),  # BI
+    "901716191365": ClickUpListInfo("design", SEGUNDO_ANO),  # UX
 }
 
 
@@ -188,18 +212,28 @@ class EtlService:
         priority_label = (raw_task.get("priority") or {}).get("priority")
         priority = CLICKUP_PRIORITY_MAP.get(priority_label) if priority_label else None
 
-        # No sentinel needed for turma: pipeline._filter_allowed_folders already
-        # discards every task without a folder on the CLICKUP_FOLDER_IDS
-        # allowlist before transform_tasks ever sees it, so a KeyError here would
-        # only mean genuinely malformed ClickUp data — handled like any other
+        # No sentinel needed for area or turma: pipeline._filter_allowed_lists
+        # already discards every task whose list is not in CLICKUP_LIST_MAP
+        # before transform_tasks ever sees it, so a KeyError here would only
+        # mean genuinely malformed ClickUp data — handled like any other
         # required field, by discarding this one record (see RECORD_ERRORS).
+        # turma comes from the mapping rather than folder.name, since the folder
+        # ClickUp reports is only the immediate parent (e.g. "Backend").
+        list_info = CLICKUP_LIST_MAP[raw_task["list"]["id"]]
+
+        # Only the alert rule reads this; completion_date stays tied to
+        # date_closed (see design-decisions.md). A missing status or type means
+        # "not finished", never a discarded task.
+        raw_status = raw_task.get("status")
+        status_type = raw_status.get("type") if isinstance(raw_status, dict) else None
+
         return Task(
             task_id=raw_task["id"],
             title=raw_task.get("name", "No title"),
             assignee=assignee,
             priority=priority,
             status=(raw_task.get("status") or {}).get("status"),
-            area=self._resolve_area(raw_task.get("list") or {}),
+            area=list_info.area,
             creation_date=self._parse_millis_to_date(raw_task["date_created"]),
             due_date=self._parse_millis_to_date(raw_task.get("due_date")),
             completion_date=self._parse_millis_to_date(raw_task.get("date_closed")),
@@ -208,23 +242,9 @@ class EtlService:
             update_date=self._parse_millis_to_date(raw_task.get("date_updated")),
             assignee_email=assignee_email,
             tags=[tag.get("name") for tag in raw_task.get("tags", [])],
-            turma=raw_task["folder"]["name"],
+            turma=list_info.turma,
+            status_is_done=status_type in FINISHED_STATUS_TYPES,
         )
-
-    @staticmethod
-    def _resolve_area(task_list: dict) -> str:
-        """Resolve a task's area from the ClickUp list it belongs to.
-
-        Args:
-            task_list: The task's ``list`` object.
-
-        Returns:
-            str: The area mapped to this list's id in
-            :data:`CLICKUP_LIST_TO_AREA`, or :data:`NO_AREA` when the list id
-            is absent or isn't in the mapping — e.g. a list that exists in an
-            allowed folder but was never assigned an area.
-        """
-        return CLICKUP_LIST_TO_AREA.get(task_list.get("id"), NO_AREA)
 
     @staticmethod
     def transform_details(raw_tasks: list[dict]) -> list[TaskDetail]:
