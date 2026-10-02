@@ -90,7 +90,11 @@ class ExcelWriter:
             if isinstance(value, Enum):
                 value = value.value
 
-            cell = worksheet.cell(row=row, column=column_map[header], value=value)
+            # Assigned separately: worksheet.cell(..., value=None) leaves the
+            # existing value in place, so a field that became empty in the
+            # source (a reopened task's data_conclusao) would stay stale.
+            cell = worksheet.cell(row=row, column=column_map[header])
+            cell.value = value
 
             if isinstance(value, date):
                 cell.number_format = "DD/MM/YYYY"

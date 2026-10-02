@@ -130,56 +130,121 @@ def test_transform_tasks_converts_valid_task(etl_service: EtlService, make_click
     assert result[0].assignee == "Alice Silva"
 
 
-# --- status_is_done (ClickUp status type) ------------------------------------------
+# --- completion_date (current ClickUp status type) --------------------------------
+
+DONE_MILLIS = "1738368000000"  # 2025-01-31 21:00 in Sao Paulo
+CLOSED_MILLIS = "1738540800000"  # 2025-02-02 21:00 in Sao Paulo
 
 
-@pytest.mark.parametrize(
-    ("status", "expected"),
-    [
-        ({"status": "done", "type": "done"}, True),
-        ({"status": "Closed", "type": "closed"}, True),
-        ({"status": "in progress", "type": "custom"}, False),
-        ({"status": "backlog", "type": "open"}, False),
-        ({"status": "to do", "type": "unstarted"}, False),
-    ],
-    ids=["done", "closed", "custom", "open", "unstarted"],
-)
-def test_transform_tasks_sets_status_is_done_from_status_type(
-    etl_service: EtlService, make_clickup_task, status: dict, expected: bool
+def test_transform_tasks_done_status_uses_date_done(
+    etl_service: EtlService, make_clickup_task
 ) -> None:
-    """Only the "done" and "closed" status types mark a task as finished."""
-    result = etl_service.transform_tasks([make_clickup_task(status=status)])
+    """A "done" status has no date_closed, so completion falls back to date_done."""
+    task = make_clickup_task(
+        status={"status": "done", "type": "done"}, date_closed=None, date_done=DONE_MILLIS
+    )
 
-    assert result[0].status_is_done is expected
-    assert result[0].status == status["status"]
+    result = etl_service.transform_tasks([task])
+
+    assert result[0].completion_date.isoformat() == "2025-01-31"
+
+
+def test_transform_tasks_closed_status_prefers_date_closed(
+    etl_service: EtlService, make_clickup_task
+) -> None:
+    """A "closed" status uses date_closed even when date_done is also filled."""
+    task = make_clickup_task(
+        status={"status": "Closed", "type": "closed"},
+        date_closed=CLOSED_MILLIS,
+        date_done=DONE_MILLIS,
+    )
+
+    result = etl_service.transform_tasks([task])
+
+    assert result[0].completion_date.isoformat() == "2025-02-02"
+
+
+@pytest.mark.parametrize("status_type", ["custom", "open", "unstarted"])
+def test_transform_tasks_unfinished_status_ignores_stale_dates(
+    etl_service: EtlService, make_clickup_task, status_type: str
+) -> None:
+    """A reopened task loses its completion date even if ClickUp still sends one."""
+    task = make_clickup_task(
+        status={"status": "review", "type": status_type},
+        date_closed=CLOSED_MILLIS,
+        date_done=DONE_MILLIS,
+    )
+
+    result = etl_service.transform_tasks([task])
+
+    assert result[0].completion_date is None
+    assert result[0].status == "review"
 
 
 @pytest.mark.parametrize(
     "status",
-    [{"status": "In Progress"}, {"status": "done", "type": None}],
+    [{"status": "done"}, {"status": "done", "type": None}],
     ids=["no-type", "null-type"],
 )
-def test_transform_tasks_status_without_type_is_not_done(
+def test_transform_tasks_status_without_type_is_not_completed(
     etl_service: EtlService, make_clickup_task, status: dict
 ) -> None:
-    """A status with no type reads as not finished, without raising."""
-    result = etl_service.transform_tasks([make_clickup_task(status=status)])
+    """A status with no type reads as not completed, without raising."""
+    task = make_clickup_task(status=status, date_closed=CLOSED_MILLIS, date_done=DONE_MILLIS)
 
-    assert result[0].status_is_done is False
+    result = etl_service.transform_tasks([task])
+
+    assert result[0].completion_date is None
 
 
 def test_build_task_missing_status_key_does_not_raise_on_type(
     etl_service: EtlService, make_clickup_task
 ) -> None:
-    """With no status key at all, the type lookup returns False instead of raising."""
+    """With no status key at all, the type lookup does not raise."""
     raw_task = make_clickup_task()
     del raw_task["status"]
 
     with pytest.raises(ValidationError) as excinfo:
         etl_service._build_task(raw_task)  # pylint: disable=protected-access
 
-    # The only failure is the required free-text status, never status_is_done.
+    # The only failure is the required free-text status, never the type lookup.
     assert [error["loc"] for error in excinfo.value.errors()] == [("status",)]
+
+
+# --- assignee_names ----------------------------------------------------------------
+
+
+def test_transform_tasks_keeps_each_assignee_name_in_source_order(
+    etl_service: EtlService, make_clickup_task
+) -> None:
+    """assignee_names lists every canonical name; assignee stays the joined string."""
+    task = make_clickup_task(
+        assignees=[
+            {"username": "Bob Souza", "email": "bob.jira@example.com"},
+            {"username": "Ghost", "email": "ghost@example.com"},
+            {"username": "Alice Silva", "email": "alice.jira@example.com"},
+        ]
+    )
+
+    result = etl_service.transform_tasks([task])
+
+    assert result[0].assignee_names == [
+        "Bob Souza",
+        "Unmapped employee: ghost@example.com",
+        "Alice Silva",
+    ]
+    assert result[0].assignee == ", ".join(result[0].assignee_names)
+    assert result[0].assignee_email == "bob.jira@example.com"
+
+
+def test_transform_tasks_unassigned_task_has_no_assignee_names(
+    etl_service: EtlService, make_clickup_task
+) -> None:
+    """An unassigned task keeps the placeholder in assignee but lists no names."""
+    result = etl_service.transform_tasks([make_clickup_task(assignees=[])])
+
+    assert result[0].assignee == NO_RESPONSIBLE
+    assert result[0].assignee_names == []
 
 
 @pytest.mark.parametrize(
@@ -580,8 +645,11 @@ def test_transform_tasks_open_task_has_no_completion_date(
 def test_transform_tasks_closed_task_has_a_completion_date(
     etl_service: EtlService, make_clickup_task
 ) -> None:
-    """A task with a millisecond ``date_closed`` converts to a concrete completion_date."""
-    result = etl_service.transform_tasks([make_clickup_task(date_closed="1738368000000")])
+    """A closed task with a millisecond ``date_closed`` gets a concrete completion_date."""
+    task = make_clickup_task(
+        status={"status": "Closed", "type": "closed"}, date_closed="1738368000000"
+    )
+    result = etl_service.transform_tasks([task])
 
     assert result[0].completion_date is not None
 
