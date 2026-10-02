@@ -69,20 +69,24 @@ A normalized ClickUp task. Upsert key: `task_id` (ClickUp's `id`).
 | `area` | `str \| None` | `list.id` resolved against the fixed `CLICKUP_LIST_MAP` mapping (`area` field) |
 | `creation_date` | `date` | `date_created` (millisecond timestamp) |
 | `due_date` | `date \| None` | `due_date` (millisecond timestamp) |
-| `completion_date` | `date \| None` | `date_closed` (millisecond timestamp) |
+| `completion_date` | `date \| None` | `date_closed`, falling back to `date_done` (millisecond timestamp), only when `status.type` is `done` or `closed`; otherwise `None`. See [`design-decisions.md`](design-decisions.md#28) |
 | `task_type` | `TaskType` | fixed to `TaskType.TASK` — see [`design-decisions.md`](design-decisions.md#22) |
 | `creator` | `str \| None` | `creator.username` |
 | `update_date` | `date \| None` | `date_updated` (millisecond timestamp) |
 | `assignee_email` | `EmailStr \| None` | `EmployeeRegistry.get_teams_email` when set; otherwise `assignees[0].email`, falling back to `EmployeeRegistry.get_registered_email` |
 | `tags` | `list[str]` | `tags[*].name` |
 | `turma` | `str` | `list.id` resolved against the fixed `CLICKUP_LIST_MAP` mapping (`turma` field); `folder.name` is not used, see [`design-decisions.md`](design-decisions.md#23) |
+| `assignee_names` | `list[str]` | each assignee's canonical name, in ClickUp order; not written to Excel, feeds `tarefa_responsavel` |
 
 **Multiple assignees:** unlike Jira, ClickUp allows more than one assignee per
 task. Each is normalized individually by `normalize_employee_identifier` (by
 email when present, otherwise by `username`), and the resulting canonical
 names are joined into `assignee`. Only the **first** assignee's email feeds
 `assignee_email`, because a Teams @mention can only target one person — see
-[`design-decisions.md`](design-decisions.md#22).
+[`design-decisions.md`](design-decisions.md#22). The list of names lives in
+`assignee_names`: in Postgres, `tarefas.responsavel_id` gets the first one and
+`tarefa_responsavel` gets one row per registered assignee (see
+[`design-decisions.md`](design-decisions.md#28)).
 
 **Area (ClickUp list mapping):** `area` comes from `task["list"]["id"]`,
 resolved against the fixed `CLICKUP_LIST_MAP` dict (list_id ->
@@ -240,10 +244,11 @@ the corresponding `.xlsx` tab.
 | Table | Role | Upserted by |
 |---|---|---|
 | `funcionarios` | Employee identity, synced from `DIM_FUNCIONARIO`. Includes `photo_url`, the photo URL consumed by the dashboard, and `teams_email`, which overrides `clickup_email` specifically for Teams @mentions when the two diverge (see [`design-decisions.md`](design-decisions.md#26)). | `upsert_employee` |
-| `tarefas` | One row per ClickUp task; `responsavel_id` is `NULL` when the employee could not be mapped. `arquivada_em` holds the timestamp when the task stopped appearing in the fetch (`CLICKUP_SPACE_ID` + the lists in `CLICKUP_LIST_MAP`, `NULL` while active); the row is never deleted, and `unarchive_seen_tasks` clears the column when the task shows up again. `turma` comes from `CLICKUP_LIST_MAP` (see [`design-decisions.md`](design-decisions.md#23)), never user-entered. | `upsert_task` (archiving: `archive_missing_tasks`, `unarchive_seen_tasks`) |
+| `tarefas` | One row per ClickUp task; `responsavel_id` is the first assignee, `NULL` when they could not be mapped. `data_conclusao` goes back to `NULL` when the task is reopened. `arquivada_em` holds the timestamp when the task stopped appearing in the fetch (`CLICKUP_SPACE_ID` + the lists in `CLICKUP_LIST_MAP`, `NULL` while active); the row is never deleted, and `unarchive_seen_tasks` clears the column when the task shows up again. `turma` comes from `CLICKUP_LIST_MAP` (see [`design-decisions.md`](design-decisions.md#23)), never user-entered. | `upsert_task` (archiving: `archive_missing_tasks`, `unarchive_seen_tasks`) |
 | `detalhes_tarefa` | Long-form task description. | `upsert_task_detail` |
 | `horas` | One Clockify time entry; `funcionario_id` is `NULL` when the employee could not be mapped. | `upsert_time_entry` |
 | `etiquetas` | Distinct tags assigned to tasks. | `upsert_tag_and_link` |
-| `tarefa_etiqueta` | N:N association between `tarefas` and `etiquetas`. | `upsert_tag_and_link` |
+| `tarefa_etiqueta` | N:N association between `tarefas` and `etiquetas`. Only adds links; a tag removed from the task stays linked. | `upsert_tag_and_link` |
+| `tarefa_responsavel` | N:N association between `tarefas` and `funcionarios`, one row per registered assignee (key `task_id, funcionario_id`). Mirrors the current assignees: links that leave ClickUp are deleted. Unmapped assignees get no row. | `sync_task_assignees` |
 | `areas` | Employee work areas, synced from `DIM_FUNCIONARIO_AREA`. | `upsert_area_and_link` |
 | `funcionario_area` | N:N association between `funcionarios` and `areas`, synced from `FATO_FUNCIONARIO_AREA`; composite key `funcionario_id` + `area_id`, both FKs. | `upsert_area_and_link` |

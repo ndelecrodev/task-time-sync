@@ -70,13 +70,14 @@ ClickUp).
 | `area` | `str \| None` | `list.id` resolvido contra o mapeamento fixo `CLICKUP_LIST_MAP` (campo `area`) |
 | `creation_date` | `date` | `date_created` (timestamp em milissegundos) |
 | `due_date` | `date \| None` | `due_date` (timestamp em milissegundos) |
-| `completion_date` | `date \| None` | `date_closed` (timestamp em milissegundos) |
+| `completion_date` | `date \| None` | `date_closed`, com fallback em `date_done` (timestamp em milissegundos), só quando `status.type` é `done` ou `closed`; senão `None`. Ver [`design-decisions.md`](design-decisions.md#28) |
 | `task_type` | `TaskType` | fixo em `TaskType.TASK` — ver [`design-decisions.md`](design-decisions.md#22) |
 | `creator` | `str \| None` | `creator.username` |
 | `update_date` | `date \| None` | `date_updated` (timestamp em milissegundos) |
 | `assignee_email` | `EmailStr \| None` | `EmployeeRegistry.get_teams_email` quando definido; senão `assignees[0].email`, com fallback em `EmployeeRegistry.get_registered_email` |
 | `tags` | `list[str]` | `tags[*].name` |
 | `turma` | `str` | `list.id` resolvido contra o mapeamento fixo `CLICKUP_LIST_MAP` (campo `turma`); `folder.name` não é usado, ver [`design-decisions.md`](design-decisions.md#23) |
+| `assignee_names` | `list[str]` | nome canônico de cada assignee, na ordem do ClickUp; não é gravado no Excel, alimenta `tarefa_responsavel` |
 
 **Múltiplos responsáveis:** ao contrário do Jira, o ClickUp permite mais de um
 assignee por tarefa. Cada um é normalizado individualmente por
@@ -84,7 +85,10 @@ assignee por tarefa. Cada um é normalizado individualmente por
 `username`) e os nomes canônicos resultantes são concatenados em `assignee`. Só
 o e-mail do **primeiro** assignee alimenta `assignee_email`, porque uma
 @menção do Teams só pode apontar para uma pessoa — ver
-[`design-decisions.md`](design-decisions.md#22).
+[`design-decisions.md`](design-decisions.md#22). A lista de nomes fica em
+`assignee_names`: no Postgres, `tarefas.responsavel_id` recebe o primeiro e
+`tarefa_responsavel` recebe uma linha por responsável cadastrado (ver
+[`design-decisions.md`](design-decisions.md#28)).
 
 **Área (mapeamento por lista do ClickUp):** `area` vem de `task["list"]["id"]`,
 resolvido contra o dicionário fixo `CLICKUP_LIST_MAP`
@@ -254,10 +258,11 @@ gravação equivalente na aba correspondente do `.xlsx`.
 | Tabela | Papel | Upsert por |
 |---|---|---|
 | `funcionarios` | Identidade de colaboradores, sincronizada a partir de `DIM_FUNCIONARIO`. Inclui `photo_url`, a URL da foto usada pelo dashboard, e `teams_email`, que sobrepõe `clickup_email` especificamente para @menções do Teams quando os dois divergem (ver [`design-decisions.md`](design-decisions.md#26)). | `upsert_employee` |
-| `tarefas` | Uma linha por tarefa do ClickUp; `responsavel_id` é `NULL` quando o colaborador não foi mapeado. `arquivada_em` guarda o timestamp em que a tarefa deixou de aparecer na busca (`CLICKUP_SPACE_ID` + listas de `CLICKUP_LIST_MAP`, `NULL` enquanto ativa); a linha nunca é apagada, e `unarchive_seen_tasks` limpa a coluna quando a tarefa volta a aparecer. `turma` vem de `CLICKUP_LIST_MAP` (ver [`design-decisions.md`](design-decisions.md#23)), nunca digitada por alguém. | `upsert_task` (arquivamento: `archive_missing_tasks`, `unarchive_seen_tasks`) |
+| `tarefas` | Uma linha por tarefa do ClickUp; `responsavel_id` é o primeiro responsável, `NULL` quando ele não foi mapeado. `data_conclusao` fica `NULL` quando a tarefa é reaberta. `arquivada_em` guarda o timestamp em que a tarefa deixou de aparecer na busca (`CLICKUP_SPACE_ID` + listas de `CLICKUP_LIST_MAP`, `NULL` enquanto ativa); a linha nunca é apagada, e `unarchive_seen_tasks` limpa a coluna quando a tarefa volta a aparecer. `turma` vem de `CLICKUP_LIST_MAP` (ver [`design-decisions.md`](design-decisions.md#23)), nunca digitada por alguém. | `upsert_task` (arquivamento: `archive_missing_tasks`, `unarchive_seen_tasks`) |
 | `detalhes_tarefa` | Descrição longa de uma tarefa. | `upsert_task_detail` |
 | `horas` | Um apontamento de horas do Clockify; `funcionario_id` é `NULL` quando o colaborador não foi mapeado. | `upsert_time_entry` |
 | `etiquetas` | Tags distintas atribuídas a tarefas. | `upsert_tag_and_link` |
-| `tarefa_etiqueta` | Associação N:N entre `tarefas` e `etiquetas`. | `upsert_tag_and_link` |
+| `tarefa_etiqueta` | Associação N:N entre `tarefas` e `etiquetas`. Só acrescenta vínculos; uma etiqueta removida da tarefa continua vinculada. | `upsert_tag_and_link` |
+| `tarefa_responsavel` | Associação N:N entre `tarefas` e `funcionarios`, uma linha por responsável cadastrado (chave `task_id, funcionario_id`). Espelha os responsáveis atuais: vínculos que saem do ClickUp são apagados. Responsáveis não mapeados não geram linha. | `sync_task_assignees` |
 | `areas` | Áreas de atuação dos colaboradores, sincronizadas a partir de `DIM_FUNCIONARIO_AREA`. | `upsert_area_and_link` |
 | `funcionario_area` | Associação N:N entre `funcionarios` e `areas`, sincronizada a partir de `FATO_FUNCIONARIO_AREA`; chave composta `funcionario_id` + `area_id`, ambas FK. | `upsert_area_and_link` |
