@@ -167,6 +167,96 @@ def test_sync_clickup_skips_archiving_when_in_scope_fetch_is_empty(
     assert "skipping archiving for this run" in caplog.text
 
 
+# --- multiple assignees -------------------------------------------------------------
+
+NAME_TO_ID = {"Alice Silva": 1, "Bob Souza": 2}
+
+
+def _run_sync_with(etl_service, tasks: list[dict]) -> MagicMock:
+    """Run sync_clickup over raw tasks with ClickUp and Excel mocked; return the DB mock."""
+    postgres_client = MagicMock()
+    with (
+        patch("sop_pipeline.pipeline.ClickUpClient") as clickup_cls,
+        patch("sop_pipeline.pipeline.ExcelWriter"),
+    ):
+        clickup_cls.return_value.fetch_tasks.return_value = tasks
+        sync_clickup(etl_service, postgres_client, NAME_TO_ID)
+    return postgres_client
+
+
+def test_sync_clickup_links_every_registered_assignee(etl_service, make_clickup_task) -> None:
+    """Regression: two assignees -> responsavel_id is the first, both get a link.
+
+    responsavel_id used to be name_to_id.get(task.assignee), and the joined
+    "Bob Souza, Alice Silva" string never matched, so it was always NULL.
+    """
+    task = make_clickup_task(
+        task_id="ABC-1",
+        assignees=[
+            {"username": "Bob Souza", "email": "bob.jira@example.com"},
+            {"username": "Alice Silva", "email": "alice.jira@example.com"},
+        ],
+    )
+
+    postgres_client = _run_sync_with(etl_service, [task])
+
+    assert postgres_client.upsert_task.call_args.kwargs["responsavel_id"] == 2
+    postgres_client.sync_task_assignees.assert_called_once_with(
+        task_id="ABC-1", funcionario_ids=[2, 1]
+    )
+
+
+def test_sync_clickup_skips_unmapped_assignee_link(etl_service, make_clickup_task) -> None:
+    """One registered and one unmapped assignee -> one link, no exception."""
+    task = make_clickup_task(
+        task_id="ABC-1",
+        assignees=[
+            {"username": "Alice Silva", "email": "alice.jira@example.com"},
+            {"username": "Ghost", "email": "ghost@example.com"},
+        ],
+    )
+
+    postgres_client = _run_sync_with(etl_service, [task])
+
+    assert postgres_client.upsert_task.call_args.kwargs["responsavel_id"] == 1
+    postgres_client.sync_task_assignees.assert_called_once_with(
+        task_id="ABC-1", funcionario_ids=[1]
+    )
+
+
+def test_sync_clickup_unmapped_first_assignee_leaves_responsavel_id_null(
+    etl_service, make_clickup_task
+) -> None:
+    """responsavel_id is the first assignee, even when only a later one is registered."""
+    task = make_clickup_task(
+        task_id="ABC-1",
+        assignees=[
+            {"username": "Ghost", "email": "ghost@example.com"},
+            {"username": "Alice Silva", "email": "alice.jira@example.com"},
+        ],
+    )
+
+    postgres_client = _run_sync_with(etl_service, [task])
+
+    assert postgres_client.upsert_task.call_args.kwargs["responsavel_id"] is None
+    postgres_client.sync_task_assignees.assert_called_once_with(
+        task_id="ABC-1", funcionario_ids=[1]
+    )
+
+
+def test_sync_clickup_discarded_task_gets_no_links(etl_service, make_clickup_task) -> None:
+    """A task rejected by validation is neither upserted nor linked."""
+    tasks = [
+        make_clickup_task(task_id="ABC-1"),
+        make_clickup_task(task_id="ABC-2", priority=None),
+    ]
+
+    postgres_client = _run_sync_with(etl_service, tasks)
+
+    linked = [call.kwargs["task_id"] for call in postgres_client.sync_task_assignees.call_args_list]
+    assert linked == ["ABC-1"]
+
+
 def test_sync_clickup_does_not_write_detail_for_discarded_task(
     etl_service, make_clickup_task
 ) -> None:

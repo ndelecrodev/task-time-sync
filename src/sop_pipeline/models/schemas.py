@@ -59,17 +59,16 @@ class Task(BaseModel):
         area: Value of the Jira "area" custom field, used to route alerts.
         creation_date: Date the issue was created.
         due_date: Due date, when one is set.
-        completion_date: Date the issue was resolved, when it was.
+        completion_date: Date the task was completed, set only while its
+            current ClickUp status type is "done" or "closed".
         task_type: Issue type.
         creator: Display name of whoever opened the issue.
         update_date: Date of the last update.
         assignee_email: Assignee e-mail, forwarded in the Teams alert.
         tags: Jira labels attached to the issue.
+        assignee_names: Canonical name of each assignee, in source order,
+            normalized individually; ``assignee`` is these joined with ", ".
         turma: The turma the task belongs to, resolved from its ClickUp list.
-        status_is_done: True when the source status belongs to a finished
-            category (ClickUp status type "done" or "closed"). Used only by the
-            alert rule, never persisted. The default False keeps existing tests
-            and fixtures valid.
     """
 
     task_id: str
@@ -87,7 +86,7 @@ class Task(BaseModel):
     assignee_email: EmailStr | None = None
     tags: list[str] = Field(default_factory=list)
     turma: str
-    status_is_done: bool = False
+    assignee_names: list[str] = Field(default_factory=list)
 
     @computed_field
     @property
