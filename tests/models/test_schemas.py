@@ -66,6 +66,16 @@ def test_task_type_values_match_jira_labels(member: TaskType, value: str) -> Non
     assert member.value == value
 
 
+def test_no_priority_value_is_sem_prioridade() -> None:
+    """The no-priority member carries the Portuguese label written to every sink."""
+    assert Priority.NO_PRIORITY.value == "Sem prioridade"
+
+
+def test_task_parent_task_id_defaults_to_none() -> None:
+    """A Task built without a parent is not a subtask of anything."""
+    assert _task().parent_task_id is None
+
+
 @pytest.mark.parametrize("bad_priority", ["Critical", "Urgent", "None"])
 def test_task_rejects_out_of_enum_priority(bad_priority: str) -> None:
     """A priority outside the enum fails validation."""
