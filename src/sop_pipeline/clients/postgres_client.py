@@ -385,6 +385,30 @@ class PostgresClient:
             session.execute(stmt)
             session.commit()
 
+    def unarchive_seen_tasks(self, seen_task_ids: set[str]) -> int:
+        """Clear the archive mark of every archived task present in the latest sync.
+
+        The mirror of :meth:`archive_missing_tasks`, driven by the same set: a
+        task returned by ClickUp has not disappeared, even if it failed
+        validation and was not upserted in this run.
+
+        Args:
+            seen_task_ids: Every task_id returned by this run's ClickUp fetch.
+
+        Returns:
+            int: How many rows had ``arquivada_em`` cleared.
+        """
+        with Session(self.engine) as session:
+            stmt = (
+                update(Tarefas)
+                .where(Tarefas.arquivada_em.is_not(None))
+                .where(Tarefas.task_id.in_(seen_task_ids))
+                .values(arquivada_em=None)
+            )
+            result = session.execute(stmt)
+            session.commit()
+            return result.rowcount
+
     def get_archived_tasks(self) -> Sequence[Tarefas]:
         """Fetch every task currently marked as archived.
 

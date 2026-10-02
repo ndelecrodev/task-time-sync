@@ -13,6 +13,8 @@ from datetime import date
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from sqlalchemy.dialects import postgresql
+
 from sop_pipeline.clients.postgres_client import (
     DetalhesTarefa,
     Etiquetas,
@@ -260,3 +262,37 @@ def test_upsert_tag_and_link_is_idempotent_when_link_exists() -> None:
     session.add.assert_not_called()
     session.flush.assert_not_called()
     session.commit.assert_called_once()
+
+
+# --- unarchive_seen_tasks ----------------------------------------------------------
+
+
+def test_unarchive_seen_tasks_clears_only_archived_rows_in_the_seen_set() -> None:
+    """One UPDATE clears arquivada_em on archived rows whose task_id was seen."""
+    with patched_session() as session:
+        session.execute.return_value.rowcount = 2
+        unarchived = _client().unarchive_seen_tasks({"ABC-1", "ABC-2"})
+
+    stmt = session.execute.call_args.args[0]
+    sql = str(stmt.compile(dialect=postgresql.dialect()))
+    assert sql.startswith("UPDATE tarefas SET arquivada_em=")
+    assert "tarefas.arquivada_em IS NOT NULL" in sql
+    assert "tarefas.task_id IN" in sql
+    assert unarchived == 2
+    session.commit.assert_called_once()
+
+
+# --- status_is_done is alert-only ---------------------------------------------------
+
+
+def test_upsert_task_does_not_persist_status_is_done() -> None:
+    """tarefas has no status_is_done column and upsert_task never sets one."""
+    assert "status_is_done" not in Tarefas.__table__.columns
+    task = _task().model_copy(update={"status_is_done": True})
+
+    with patched_session() as session:
+        session.scalars.return_value = _scalar_result(None)
+        _client().upsert_task(task=task, responsavel_id=7)
+
+    added = session.add.call_args.args[0]
+    assert not hasattr(added, "status_is_done")

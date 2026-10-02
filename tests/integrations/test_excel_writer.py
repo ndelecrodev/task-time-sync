@@ -16,7 +16,7 @@ from sop_pipeline.integrations.excel_table_helpers import (
     next_row,
     expand_table,
 )
-from sop_pipeline.integrations.excel_writer import ExcelWriter
+from sop_pipeline.integrations.excel_writer import TASK_COLUMN_MAP, ExcelWriter
 from sop_pipeline.models.schemas import Priority, Task, TaskType
 
 # Column indices in the BASE_TAREFAS fixture layout (1-based).
@@ -26,6 +26,7 @@ COL_DIAS_RESTANTES = 13
 COL_ATRASADO = 14
 COL_STATUS_PRAZO = 15
 COL_TURMA = 16
+COL_ARQUIVADA_EM = 17
 FORMULA_COLS = [COL_DIAS_RESTANTES, COL_ATRASADO, COL_STATUS_PRAZO]
 
 
@@ -114,3 +115,52 @@ def test_save_tasks_appends_new_row_and_copies_formulas(tasks_workbook_path: str
         appended = worksheet.cell(row=3, column=column).value
         assert appended == template
         assert isinstance(appended, str) and appended.startswith("=")
+
+
+# --- unmark_archived_tasks --------------------------------------------------------
+
+
+def _archive_template_row(path: str) -> None:
+    """Stamp arquivada_em on the fixture's ABC-1 row, as mark_archived_tasks would."""
+    workbook = openpyxl.load_workbook(path)
+    workbook["BASE_TAREFAS"].cell(row=2, column=COL_ARQUIVADA_EM, value=date(2026, 9, 26))
+    workbook.save(path)
+
+
+def test_unmark_archived_tasks_clears_row_of_seen_task(tasks_workbook_path: str) -> None:
+    """An archived row whose id is in the seen set gets arquivada_em cleared, nothing else."""
+    _archive_template_row(tasks_workbook_path)
+
+    unarchived = ExcelWriter.unmark_archived_tasks(tasks_workbook_path, {"ABC-1", "NOT-IN-SHEET"})
+
+    worksheet = openpyxl.load_workbook(tasks_workbook_path)["BASE_TAREFAS"]
+    assert worksheet.cell(row=2, column=COL_ARQUIVADA_EM).value is None
+    assert worksheet.cell(row=2, column=COL_TITULO).value == "Template title"
+    assert unarchived == 1
+
+
+def test_unmark_archived_tasks_leaves_unseen_row_archived(tasks_workbook_path: str) -> None:
+    """An archived row whose id is not in the seen set keeps its date."""
+    _archive_template_row(tasks_workbook_path)
+
+    unarchived = ExcelWriter.unmark_archived_tasks(tasks_workbook_path, {"ABC-9"})
+
+    worksheet = openpyxl.load_workbook(tasks_workbook_path)["BASE_TAREFAS"]
+    assert worksheet.cell(row=2, column=COL_ARQUIVADA_EM).value is not None
+    assert unarchived == 0
+
+
+# --- status_is_done is alert-only ---------------------------------------------------
+
+
+def test_save_tasks_does_not_write_status_is_done(tasks_workbook_path: str) -> None:
+    """status_is_done has no column mapping, so the sheet never receives it."""
+    assert "status_is_done" not in TASK_COLUMN_MAP.values()
+    task = _task("ABC-2", "Finished task").model_copy(update={"status_is_done": True})
+
+    ExcelWriter.save_tasks(tasks_workbook_path, [task])
+
+    worksheet = openpyxl.load_workbook(tasks_workbook_path)["BASE_TAREFAS"]
+    headers = [cell.value for cell in worksheet[1]]
+    assert "status_is_done" not in headers
+    assert True not in [cell.value for cell in worksheet[3]]
