@@ -10,6 +10,7 @@ import logging
 from unittest.mock import patch
 
 import pytest
+from pydantic import ValidationError
 
 from sop_pipeline.services.etl_service import (
     NO_AREA,
@@ -127,6 +128,58 @@ def test_transform_tasks_converts_valid_task(etl_service: EtlService, make_click
     assert len(result) == 1
     assert result[0].task_id == "ABC-1"
     assert result[0].assignee == "Alice Silva"
+
+
+# --- status_is_done (ClickUp status type) ------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        ({"status": "done", "type": "done"}, True),
+        ({"status": "Closed", "type": "closed"}, True),
+        ({"status": "in progress", "type": "custom"}, False),
+        ({"status": "backlog", "type": "open"}, False),
+        ({"status": "to do", "type": "unstarted"}, False),
+    ],
+    ids=["done", "closed", "custom", "open", "unstarted"],
+)
+def test_transform_tasks_sets_status_is_done_from_status_type(
+    etl_service: EtlService, make_clickup_task, status: dict, expected: bool
+) -> None:
+    """Only the "done" and "closed" status types mark a task as finished."""
+    result = etl_service.transform_tasks([make_clickup_task(status=status)])
+
+    assert result[0].status_is_done is expected
+    assert result[0].status == status["status"]
+
+
+@pytest.mark.parametrize(
+    "status",
+    [{"status": "In Progress"}, {"status": "done", "type": None}],
+    ids=["no-type", "null-type"],
+)
+def test_transform_tasks_status_without_type_is_not_done(
+    etl_service: EtlService, make_clickup_task, status: dict
+) -> None:
+    """A status with no type reads as not finished, without raising."""
+    result = etl_service.transform_tasks([make_clickup_task(status=status)])
+
+    assert result[0].status_is_done is False
+
+
+def test_build_task_missing_status_key_does_not_raise_on_type(
+    etl_service: EtlService, make_clickup_task
+) -> None:
+    """With no status key at all, the type lookup returns False instead of raising."""
+    raw_task = make_clickup_task()
+    del raw_task["status"]
+
+    with pytest.raises(ValidationError) as excinfo:
+        etl_service._build_task(raw_task)  # pylint: disable=protected-access
+
+    # The only failure is the required free-text status, never status_is_done.
+    assert [error["loc"] for error in excinfo.value.errors()] == [("status",)]
 
 
 @pytest.mark.parametrize(

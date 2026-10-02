@@ -603,3 +603,38 @@ would conflate these two responsibilities: it would break identity matching
 to solve a problem that is purely about notifications. Keeping the two
 fields separate leaves each free to change for its own reason, without a
 side effect on the other.
+
+## 27. Alerts stop when the ClickUp status type is "done" or "closed"; data completion stays tied to `date_closed`
+
+Every ClickUp status has a `type` (`open`, `unstarted`, `custom`, `done` or
+`closed`) on top of the free-text name that goes into `Task.status`
+(decision 11). `EtlService._build_task` sets `Task.status_is_done` to `True`
+when that type is in `FINISHED_STATUS_TYPES` (`done` or `closed`), and
+`AlertService.tasks_to_alert` drops every task with `status_is_done` set, in
+addition to the existing `completion_date` rule. A status with no type counts
+as not finished. `status_is_done` has no column in `BASE_TAREFAS` or in
+`tarefas`: it exists only for the alert rule.
+
+`completion_date` still comes from `date_closed`, as before. So
+`data_conclusao` in Excel and Postgres, the `status_prazo` formula, the
+`CALCULOS`/`INDICADORES` metrics and the dashboard only treat a task as
+completed once it is in a `closed` status.
+
+**Why:** ClickUp only fills `date_closed` when a task reaches a status of type
+`closed`. Every list in `CLICKUP_LIST_MAP` has a `done` status (type `done`)
+before `Closed` (type `closed`), and a task marked `done` kept getting Teams
+deadline alerts until someone closed it. For whoever receives the alert, that
+task is already delivered. Comparing by type instead of by name avoids
+depending on status names, which differ per workspace and have already
+changed from Portuguese to English once.
+
+The change is limited to alerts by the product owner's decision. Moving
+`completion_date` to `done` would change `data_conclusao`, the completion
+percentage in `HISTORICO_PROGRESSO` and every metric that depends on
+"completed", which would require reviewing what each metric should count.
+
+**Trade-off:** this leaves an accepted inconsistency. A task in a `done`
+status past its due date shows "Atrasado" in the spreadsheet and the
+dashboard, because `data_conclusao` stays empty until the task is closed, yet
+it no longer alerts on Teams. Anyone comparing both sides will find late
+tasks with no alert, and that behavior is expected.

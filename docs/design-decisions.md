@@ -638,3 +638,38 @@ potencialmente a validação de e-mail único da decisão de duplicatas) para
 resolver um problema que é puramente de notificação. Manter os dois campos
 separados deixa cada um livre para mudar por sua própria razão, sem que um
 efeito colateral no outro.
+
+## 27. Alertas param quando o status do ClickUp é do tipo "done" ou "closed"; a conclusão dos dados continua presa a `date_closed`
+
+Todo status do ClickUp tem um `type` (`open`, `unstarted`, `custom`, `done`
+ou `closed`), além do nome livre que vai para `Task.status` (decisão 11).
+`EtlService._build_task` preenche `Task.status_is_done` com `True` quando
+esse tipo está em `FINISHED_STATUS_TYPES` (`done` ou `closed`), e
+`AlertService.tasks_to_alert` descarta toda tarefa com `status_is_done`
+verdadeiro, além da regra que já existia para `completion_date`. Um status
+sem tipo conta como não concluído. `status_is_done` não tem coluna em
+`BASE_TAREFAS` nem em `tarefas`: existe só para a regra de alerta.
+
+`completion_date` continua vindo de `date_closed`, como antes. Com isso,
+`data_conclusao` no Excel e no Postgres, a fórmula de `status_prazo`, os
+indicadores de `CALCULOS`/`INDICADORES` e o dashboard só consideram concluída
+uma tarefa em status `closed`.
+
+**Por quê:** o ClickUp só preenche `date_closed` quando a tarefa chega a um
+status do tipo `closed`. Em todas as listas de `CLICKUP_LIST_MAP` o fluxo tem
+um status `done` (tipo `done`) antes de `Closed` (tipo `closed`), e uma
+tarefa marcada como `done` continuava recebendo alerta de prazo no Teams até
+alguém fechá-la. Para quem recebe o alerta, a tarefa já está entregue.
+Comparar pelo tipo, e não pelo nome, evita depender de nomes de status que
+mudam por workspace e já mudaram de português para inglês uma vez.
+
+A mudança foi restrita aos alertas por decisão do dono do produto. Mover
+`completion_date` para `done` alteraria `data_conclusao`, o percentual de
+conclusão em `HISTORICO_PROGRESSO` e todos os indicadores que dependem de
+"concluída", o que exigiria revisar o que cada métrica deve contar.
+
+**Trade-off:** fica uma inconsistência aceita. Uma tarefa em status `done`
+com o prazo vencido aparece como "Atrasado" na planilha e no dashboard,
+porque `data_conclusao` continua vazia até ela ser fechada, mas não gera mais
+alerta no Teams. Quem comparar os dois lados vai encontrar tarefas atrasadas
+sem alerta, e esse comportamento é o esperado.

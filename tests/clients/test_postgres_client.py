@@ -280,3 +280,19 @@ def test_unarchive_seen_tasks_clears_only_archived_rows_in_the_seen_set() -> Non
     assert "tarefas.task_id IN" in sql
     assert unarchived == 2
     session.commit.assert_called_once()
+
+
+# --- status_is_done is alert-only ---------------------------------------------------
+
+
+def test_upsert_task_does_not_persist_status_is_done() -> None:
+    """tarefas has no status_is_done column and upsert_task never sets one."""
+    assert "status_is_done" not in Tarefas.__table__.columns
+    task = _task().model_copy(update={"status_is_done": True})
+
+    with patched_session() as session:
+        session.scalars.return_value = _scalar_result(None)
+        _client().upsert_task(task=task, responsavel_id=7)
+
+    added = session.add.call_args.args[0]
+    assert not hasattr(added, "status_is_done")
