@@ -8,6 +8,8 @@ tasks within the same window are unaffected.
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from sop_pipeline.config.settings import settings
+from sop_pipeline.models.schemas import Priority
 from sop_pipeline.services.alert_service import AlertService
 from sop_pipeline.services.etl_service import EtlService
 
@@ -107,5 +109,39 @@ def test_overdue_task_in_closed_status_does_not_alert(
         status={"status": "Closed", "type": "closed"},
         date_closed=_millis_in_days(-1),
     )
+
+    assert AlertService.tasks_to_alert([task]) == []
+
+
+# --- tasks without priority ---------------------------------------------------------
+
+
+def test_sem_prioridade_uses_the_medium_window() -> None:
+    """A task with no priority set resolves to the same window as Medium."""
+    # pylint: disable=protected-access
+    assert AlertService._alert_window(Priority.NO_PRIORITY.value) == settings.ALERT_DAYS_MEDIUM
+
+
+def test_sem_prioridade_task_inside_medium_window_alerts(
+    etl_service: EtlService, make_clickup_task
+) -> None:
+    """A task with no priority set, due within ALERT_DAYS_MEDIUM, alerts."""
+    raw_task = make_clickup_task(
+        priority=None, due_date=_millis_in_days(settings.ALERT_DAYS_MEDIUM)
+    )
+    task = etl_service.transform_tasks([raw_task])[0]
+    assert task.priority is Priority.NO_PRIORITY
+
+    assert AlertService.tasks_to_alert([task]) == [task]
+
+
+def test_sem_prioridade_task_outside_medium_window_does_not_alert(
+    etl_service: EtlService, make_clickup_task
+) -> None:
+    """A task with no priority set, due one day past ALERT_DAYS_MEDIUM, does not alert."""
+    raw_task = make_clickup_task(
+        priority=None, due_date=_millis_in_days(settings.ALERT_DAYS_MEDIUM + 1)
+    )
+    task = etl_service.transform_tasks([raw_task])[0]
 
     assert AlertService.tasks_to_alert([task]) == []

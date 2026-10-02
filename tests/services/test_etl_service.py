@@ -12,6 +12,7 @@ from unittest.mock import patch
 import pytest
 from pydantic import ValidationError
 
+from sop_pipeline.models.schemas import Priority, TaskType
 from sop_pipeline.services.etl_service import (
     NO_AREA,
     NO_RESPONSIBLE,
@@ -247,20 +248,13 @@ def test_transform_tasks_unassigned_task_has_no_assignee_names(
     assert result[0].assignee_names == []
 
 
-@pytest.mark.parametrize(
-    "bad_field",
-    [
-        {"priority": {"priority": "critical"}},  # not a mapped ClickUp priority
-        {"priority": None},  # null priority -> required field missing
-    ],
-)
 def test_transform_tasks_discards_bad_task_and_keeps_the_others(
-    etl_service: EtlService, make_clickup_task, caplog: pytest.LogCaptureFixture, bad_field: dict
+    etl_service: EtlService, make_clickup_task, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """An unmapped or missing priority discards only that task, before and after alike."""
+    """An unmapped priority label discards only that task, before and after alike."""
     tasks = [
         make_clickup_task(task_id="ABC-1"),
-        make_clickup_task(task_id="ABC-2", **bad_field),
+        make_clickup_task(task_id="ABC-2", priority={"priority": "critical"}),
         make_clickup_task(task_id="ABC-3"),
     ]
 
@@ -605,14 +599,91 @@ def test_transform_tasks_maps_clickup_priority_to_enum(
     assert result[0].priority.value == expected
 
 
-def test_transform_tasks_null_priority_object_discards_the_task(
+@pytest.mark.parametrize(
+    "priority_field",
+    [
+        {"priority": None},  # ClickUp's shape when no priority is set
+        {"priority": {"priority": None}},
+    ],
+)
+def test_transform_tasks_null_priority_keeps_task_as_sem_prioridade(
+    etl_service: EtlService,
+    make_clickup_task,
+    caplog: pytest.LogCaptureFixture,
+    priority_field: dict,
+) -> None:
+    """A task with no priority set is kept as "Sem prioridade", never discarded."""
+    with caplog.at_level(logging.ERROR, logger=ETL_LOGGER):
+        result = etl_service.transform_tasks([make_clickup_task(**priority_field)])
+
+    assert len(result) == 1
+    assert result[0].priority is Priority.NO_PRIORITY
+    assert result[0].priority.value == "Sem prioridade"
+    assert "Discarding ClickUp task" not in caplog.text
+
+
+def test_transform_tasks_absent_priority_key_keeps_task_as_sem_prioridade(
+    etl_service: EtlService, make_clickup_task
+) -> None:
+    """A payload with no ``priority`` key at all is treated like a null priority."""
+    raw_task = make_clickup_task()
+    del raw_task["priority"]
+
+    result = etl_service.transform_tasks([raw_task])
+
+    assert result[0].priority is Priority.NO_PRIORITY
+
+
+def test_transform_tasks_unknown_priority_label_is_still_discarded(
     etl_service: EtlService, make_clickup_task, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """A null ``priority`` (ClickUp's shape when no priority is set) discards the task."""
+    """A non-null label missing from CLICKUP_PRIORITY_MAP goes through the usual discard."""
     with caplog.at_level(logging.ERROR, logger=ETL_LOGGER):
-        result = etl_service.transform_tasks([make_clickup_task(priority=None)])
+        result = etl_service.transform_tasks(
+            [make_clickup_task(task_id="ABC-9", priority={"priority": "critical"})]
+        )
 
     assert result == []
+    assert "Discarding ClickUp task ABC-9, it could not be converted" in caplog.text
+
+
+# --- subtasks -----------------------------------------------------------------------
+
+
+def test_transform_tasks_subtask_keeps_parent_id_and_type(
+    etl_service: EtlService, make_clickup_task
+) -> None:
+    """A raw task with a parent becomes a SUBTASK pointing at that parent."""
+    result = etl_service.transform_tasks([make_clickup_task(task_id="ABC-2", parent="ABC-1")])
+
+    assert result[0].parent_task_id == "ABC-1"
+    assert result[0].task_type is TaskType.SUBTASK
+
+
+@pytest.mark.parametrize("parent_field", [{"parent": None}, {}])
+def test_transform_tasks_task_without_parent_is_a_regular_task(
+    etl_service: EtlService, make_clickup_task, parent_field: dict
+) -> None:
+    """A null or absent parent leaves parent_task_id None and task_type TASK."""
+    result = etl_service.transform_tasks([make_clickup_task(**parent_field)])
+
+    assert result[0].parent_task_id is None
+    assert result[0].task_type is TaskType.TASK
+
+
+def test_transform_tasks_nested_subtask_stores_immediate_parent(
+    etl_service: EtlService, make_clickup_task
+) -> None:
+    """A subtask of a subtask points at the subtask above it, not the top-level task."""
+    tasks = [
+        make_clickup_task(task_id="TOP"),
+        make_clickup_task(task_id="MID", parent="TOP", top_level_parent="TOP"),
+        make_clickup_task(task_id="LEAF", parent="MID", top_level_parent="TOP"),
+    ]
+
+    result = {task.task_id: task.parent_task_id for task in etl_service.transform_tasks(tasks)}
+
+    assert result == {"TOP": None, "MID": "TOP", "LEAF": "MID"}
 
 
 # --- millisecond-timestamp conversion ---------------------------------------------
@@ -689,11 +760,12 @@ def test_transform_details_diverges_from_transform_tasks(
 ) -> None:
     """A detail is still produced for a task transform_tasks discards.
 
-    ``transform_details`` runs over the raw, unfiltered tasks, so a null-priority
-    task that never becomes a Task still yields a detail here. This is exactly
-    the divergence the pipeline-level ``valid_ids`` filter exists to correct.
+    ``transform_details`` runs over the raw, unfiltered tasks, so a task with an
+    unmapped priority label that never becomes a Task still yields a detail
+    here. This is exactly the divergence the pipeline-level ``valid_ids``
+    filter exists to correct.
     """
-    tasks = [make_clickup_task(task_id="ABC-2", priority=None)]
+    tasks = [make_clickup_task(task_id="ABC-2", priority={"priority": "critical"})]
 
     built_tasks = etl_service.transform_tasks(tasks)
     details = EtlService.transform_details(tasks)
