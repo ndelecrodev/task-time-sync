@@ -641,6 +641,10 @@ efeito colateral no outro.
 
 ## 27. Alertas param quando o status do ClickUp é do tipo "done" ou "closed"; a conclusão dos dados continua presa a `date_closed`
 
+**Substituída pela decisão 28.** `Task.status_is_done` foi removido e a
+conclusão dos dados passou a seguir o tipo do status. O texto abaixo fica como
+histórico.
+
 Todo status do ClickUp tem um `type` (`open`, `unstarted`, `custom`, `done`
 ou `closed`), além do nome livre que vai para `Task.status` (decisão 11).
 `EtlService._build_task` preenche `Task.status_is_done` com `True` quando
@@ -673,3 +677,54 @@ com o prazo vencido aparece como "Atrasado" na planilha e no dashboard,
 porque `data_conclusao` continua vazia até ela ser fechada, mas não gera mais
 alerta no Teams. Quem comparar os dois lados vai encontrar tarefas atrasadas
 sem alerta, e esse comportamento é o esperado.
+
+## 28. A conclusão segue o tipo atual do status do ClickUp, e uma tarefa pode ter vários responsáveis em `tarefa_responsavel`
+
+`EtlService._build_task` preenche `completion_date` com `date_closed`, ou com
+`date_done` quando `date_closed` está vazio, apenas se o tipo do status atual
+estiver em `FINISHED_STATUS_TYPES` (`done` ou `closed`). Para qualquer outro
+tipo, ou para um status sem tipo, `completion_date` é `None`, mesmo que o
+ClickUp ainda mande uma data antiga. Reabrir uma tarefa limpa a conclusão:
+`upsert_task` grava `NULL` em `tarefas.data_conclusao`, e `save_tasks` esvazia
+a célula `data_conclusao` de `BASE_TAREFAS`. Esta entrada substitui a decisão
+27, e `Task.status_is_done` foi removido: `completion_date` passou a ser a
+única fonte de "concluída", inclusive para os alertas.
+
+Cada tarefa guarda também `Task.assignee_names`, a lista dos nomes canônicos
+dos responsáveis na ordem do ClickUp. `sync_clickup` resolve cada nome contra
+`funcionarios` e chama `PostgresClient.sync_task_assignees`, que mantém uma
+linha em `tarefa_responsavel (task_id, funcionario_id)` por responsável
+cadastrado e apaga as linhas de quem deixou de ser responsável.
+`tarefas.responsavel_id` continua sendo o primeiro responsável, a mesma pessoa
+de `assignee_email` na @menção do Teams. Nomes que viram o sentinela
+"Unmapped employee" não geram linha.
+
+**Por quê a conclusão mudou:** só o tipo `closed` preenche `date_closed`. Em
+todas as listas de `CLICKUP_LIST_MAP` o fluxo tem `done` (tipo `done`) antes de
+`Closed`, e as tarefas em `done` apareciam como abertas na planilha, no
+dashboard e nos alertas, com "Atrasado" quando o prazo já tinha passado. Na
+outra direção, `_write_task_row` passava `value=None` para
+`worksheet.cell`, e o openpyxl ignora esse argumento quando ele é `None`, então
+uma tarefa reaberta mantinha o `data_conclusao` antigo na planilha. O
+`date_done` cobre o tipo `done`, e olhar o tipo atual resolve a reabertura. A
+decisão 27 tinha separado "concluída para alertas" de "concluída para dados";
+manter duas fontes para a mesma pergunta convidava as duas a divergirem.
+
+**Por quê uma tabela N:N:** `responsavel_id` era resolvido com
+`name_to_id.get(task.assignee)`, e `assignee` é a string concatenada
+("A, B"), que nunca bate com um nome canônico. Toda tarefa com mais de um
+responsável ficava com `responsavel_id` `NULL`, e o dashboard, que monta as
+tabelas de tarefas a partir dessa coluna, deixava de mostrá-las. A correção de
+`responsavel_id` resolve o primeiro responsável; `tarefa_responsavel` dá ao
+dashboard todos os outros. Apagar uma linha dessa tabela não entra em
+conflito com a decisão 18, que trata de tarefas: a tabela é derivada e espelha
+os responsáveis atuais. `tarefa_etiqueta` segue outra regra, só acrescenta
+vínculos e nunca remove uma etiqueta que saiu da tarefa.
+
+**Trade-off:** a planilha não ganhou uma tabela equivalente.
+`BASE_TAREFAS[responsavel]` continua com a string concatenada, e as contagens
+por pessoa em `CALCULOS` usam uma busca por "contém". Isso foge de
+propósito da paridade de uma tabela do Excel para cada tabela do Postgres, para
+não mudar a estrutura da planilha. O risco conhecido: se o nome de alguém
+estiver contido no nome de outra pessoa (por exemplo "Ana Paula" e "Ana Paula
+Souza"), a busca conta a tarefa para as duas.

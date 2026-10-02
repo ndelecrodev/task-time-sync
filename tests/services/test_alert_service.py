@@ -54,45 +54,58 @@ def test_primeiro_ano_task_within_deadline_window_still_alerts(
     assert result == [task]
 
 
-# --- ClickUp status type ("done"/"closed" silence alerts) --------------------------
+# --- completion follows the ClickUp status type ------------------------------------
 
 
-def _overdue_task(etl_service: EtlService, make_clickup_task, status: dict):
-    """An overdue, high-priority Primeiro Ano task with no date_closed."""
+def _overdue_task(etl_service: EtlService, make_clickup_task, **overrides):
+    """An overdue, high-priority Primeiro Ano task; overrides set status and dates."""
     raw_task = make_clickup_task(
         priority={"priority": "high"},
         due_date=_millis_in_days(-2),
-        date_closed=None,
-        status=status,
+        **overrides,
     )
     return etl_service.transform_tasks([raw_task])[0]
 
 
-def test_overdue_task_in_done_status_type_does_not_alert(
+def test_overdue_task_in_done_status_does_not_alert(
     etl_service: EtlService, make_clickup_task
 ) -> None:
-    """A "done" status stops alerts even though completion_date is still empty."""
-    task = _overdue_task(etl_service, make_clickup_task, {"status": "done", "type": "done"})
-    assert task.completion_date is None
+    """A "done" task is completed through date_done, so it never alerts."""
+    task = _overdue_task(
+        etl_service,
+        make_clickup_task,
+        status={"status": "done", "type": "done"},
+        date_closed=None,
+        date_done=_millis_in_days(-1),
+    )
+    assert task.completion_date is not None
 
     assert AlertService.tasks_to_alert([task]) == []
 
 
-def test_overdue_task_in_custom_status_type_still_alerts(
+def test_overdue_task_in_custom_status_still_alerts(
     etl_service: EtlService, make_clickup_task
 ) -> None:
-    """A "custom" status (e.g. in progress) is unfinished work and keeps alerting."""
+    """A "custom" status is unfinished work and keeps alerting, even with a stale date."""
     task = _overdue_task(
-        etl_service, make_clickup_task, {"status": "in progress", "type": "custom"}
+        etl_service,
+        make_clickup_task,
+        status={"status": "in progress", "type": "custom"},
+        date_closed=_millis_in_days(-1),
     )
 
     assert AlertService.tasks_to_alert([task]) == [task]
 
 
-def test_overdue_task_in_closed_status_type_does_not_alert(
+def test_overdue_task_in_closed_status_does_not_alert(
     etl_service: EtlService, make_clickup_task
 ) -> None:
-    """A "closed" status stops alerts on its own, not only through date_closed."""
-    task = _overdue_task(etl_service, make_clickup_task, {"status": "Closed", "type": "closed"})
+    """A "closed" task is completed through date_closed, so it never alerts."""
+    task = _overdue_task(
+        etl_service,
+        make_clickup_task,
+        status={"status": "Closed", "type": "closed"},
+        date_closed=_millis_in_days(-1),
+    )
 
     assert AlertService.tasks_to_alert([task]) == []
