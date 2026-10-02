@@ -67,7 +67,7 @@ ClickUp).
 | `assignee` | `str` | `assignees[*].username`/`.email`, normalizados individualmente e concatenados com `", "` |
 | `priority` | `Priority` | `priority.priority` (`urgent`/`high`/`normal`/`low`), mapeado para o enum |
 | `status` | `str` | `status.status` |
-| `area` | `str \| None` | `list.id` resolvido contra o mapeamento fixo `EtlService.CLICKUP_LIST_TO_AREA` |
+| `area` | `str \| None` | `list.id` resolvido contra o mapeamento fixo `CLICKUP_LIST_MAP` (campo `area`) |
 | `creation_date` | `date` | `date_created` (timestamp em milissegundos) |
 | `due_date` | `date \| None` | `due_date` (timestamp em milissegundos) |
 | `completion_date` | `date \| None` | `date_closed` (timestamp em milissegundos) |
@@ -76,7 +76,7 @@ ClickUp).
 | `update_date` | `date \| None` | `date_updated` (timestamp em milissegundos) |
 | `assignee_email` | `EmailStr \| None` | `EmployeeRegistry.get_teams_email` quando definido; senão `assignees[0].email`, com fallback em `EmployeeRegistry.get_registered_email` |
 | `tags` | `list[str]` | `tags[*].name` |
-| `turma` | `str` | `folder.name` — lido direto do ClickUp, nunca digitado por alguém; ver [`design-decisions.md`](design-decisions.md#23) |
+| `turma` | `str` | `list.id` resolvido contra o mapeamento fixo `CLICKUP_LIST_MAP` (campo `turma`); `folder.name` não é usado, ver [`design-decisions.md`](design-decisions.md#23) |
 
 **Múltiplos responsáveis:** ao contrário do Jira, o ClickUp permite mais de um
 assignee por tarefa. Cada um é normalizado individualmente por
@@ -87,15 +87,15 @@ o e-mail do **primeiro** assignee alimenta `assignee_email`, porque uma
 [`design-decisions.md`](design-decisions.md#22).
 
 **Área (mapeamento por lista do ClickUp):** `area` vem de `task["list"]["id"]`,
-resolvido contra o dicionário fixo `EtlService.CLICKUP_LIST_TO_AREA`
-(list_id -> área), com exatamente uma entrada por lista do ClickUp que
-representa uma disciplina do curso. Quando o `id` da lista não está no
-dicionário — por exemplo, uma lista nova criada numa pasta já permitida, mas
-ainda sem área atribuída — o resultado é `NO_AREA`, o mesmo sentinela usado
-antes para o campo customizado não preenchido. Ver
+resolvido contra o dicionário fixo `CLICKUP_LIST_MAP`
+(list_id -> `ClickUpListInfo(area, turma)`), com exatamente uma entrada por
+lista do ClickUp que representa uma disciplina do curso. Uma lista fora do
+dicionário é descartada por `pipeline._filter_allowed_lists`, com aviso
+WARNING, antes de chegar a `EtlService`. Ver
+[`design-decisions.md`](design-decisions.md#23) e
 [`design-decisions.md`](design-decisions.md#24).
 
-`CLICKUP_LIST_TO_AREA` inclui as 10 listas da pasta "Segundo Ano", que
+`CLICKUP_LIST_MAP` inclui as 10 listas da pasta "Segundo Ano", que
 introduziram cinco valores de área novos: `dad`, `mobile`, `eqs`, `devops` e
 `bi`. Propositalmente, nenhum deles tem entrada correspondente em
 `settings.teams_webhooks` — como a turma "Segundo Ano" é excluída por
@@ -254,7 +254,7 @@ gravação equivalente na aba correspondente do `.xlsx`.
 | Tabela | Papel | Upsert por |
 |---|---|---|
 | `funcionarios` | Identidade de colaboradores, sincronizada a partir de `DIM_FUNCIONARIO`. Inclui `photo_url`, a URL da foto usada pelo dashboard, e `teams_email`, que sobrepõe `clickup_email` especificamente para @menções do Teams quando os dois divergem (ver [`design-decisions.md`](design-decisions.md#26)). | `upsert_employee` |
-| `tarefas` | Uma linha por tarefa do ClickUp; `responsavel_id` é `NULL` quando o colaborador não foi mapeado. `arquivada_em` guarda o timestamp em que a tarefa deixou de aparecer na busca (`CLICKUP_SPACE_ID` + `CLICKUP_FOLDER_IDS`, `NULL` enquanto ativa); a linha nunca é apagada. `turma` guarda o nome da pasta do ClickUp (ver [`design-decisions.md`](design-decisions.md#23)), lido direto da API, nunca digitado por alguém. | `upsert_task` (arquivamento: `archive_missing_tasks`) |
+| `tarefas` | Uma linha por tarefa do ClickUp; `responsavel_id` é `NULL` quando o colaborador não foi mapeado. `arquivada_em` guarda o timestamp em que a tarefa deixou de aparecer na busca (`CLICKUP_SPACE_ID` + listas de `CLICKUP_LIST_MAP`, `NULL` enquanto ativa); a linha nunca é apagada, e `unarchive_seen_tasks` limpa a coluna quando a tarefa volta a aparecer. `turma` vem de `CLICKUP_LIST_MAP` (ver [`design-decisions.md`](design-decisions.md#23)), nunca digitada por alguém. | `upsert_task` (arquivamento: `archive_missing_tasks`, `unarchive_seen_tasks`) |
 | `detalhes_tarefa` | Descrição longa de uma tarefa. | `upsert_task_detail` |
 | `horas` | Um apontamento de horas do Clockify; `funcionario_id` é `NULL` quando o colaborador não foi mapeado. | `upsert_time_entry` |
 | `etiquetas` | Tags distintas atribuídas a tarefas. | `upsert_tag_and_link` |

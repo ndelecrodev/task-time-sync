@@ -33,8 +33,8 @@ class ClickUpClient:
         """Assemble the query string for a team-tasks request.
 
         Scoping is done by ``space_ids[]`` rather than a list ID, since tasks are
-        now fetched for a whole Space and narrowed down to specific folders
-        ("turmas") afterwards, not for a single ClickUp List.
+        now fetched for a whole Space and narrowed down to the lists in
+        ``CLICKUP_LIST_MAP`` afterwards, not for a single ClickUp List.
         ``include_closed`` is always set so completed tasks are still returned —
         the pipeline needs them for the "concluidas" count. ``subtasks`` is always
         set so subtasks come back as their own task rows alongside regular tasks,
@@ -81,8 +81,8 @@ class ClickUpClient:
         """Fetch every task in a Space, following all pages.
 
         Tasks come back from every folder (and folderless list) in the Space;
-        narrowing that down to the folders that count as "turmas" is the
-        caller's job (see ``pipeline._filter_allowed_folders``), not this
+        narrowing that down to the lists in ``CLICKUP_LIST_MAP`` is the
+        caller's job (see ``pipeline._filter_allowed_lists``), not this
         client's — a client stays a thin HTTP wrapper that returns raw dicts
         without interpreting anything.
 

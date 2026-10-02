@@ -22,7 +22,7 @@ from sop_pipeline.integrations.notifier import Notifier
 from sop_pipeline.integrations.storage_client import StorageClient
 from sop_pipeline.models.schemas import Task, TimeEntry
 from sop_pipeline.services.alert_service import AlertService
-from sop_pipeline.services.etl_service import EtlService
+from sop_pipeline.services.etl_service import CLICKUP_LIST_MAP, EtlService
 from sop_pipeline.integrations.excel_reader import ExcelReader
 from sop_pipeline.clients.postgres_client import PostgresClient
 from sop_pipeline.services.employee_data_sync_service import EmployeeDataSyncService
@@ -30,34 +30,52 @@ from sop_pipeline.services.employee_data_sync_service import EmployeeDataSyncSer
 logger = logging.getLogger(__name__)
 
 
-def _filter_allowed_folders(raw_tasks: list[dict]) -> list[dict]:
-    """Keep only tasks whose ClickUp folder is on the explicit allowlist.
+def _filter_allowed_lists(raw_tasks: list[dict]) -> list[dict]:
+    """Keep only tasks whose ClickUp list is on the explicit allowlist.
 
     ``ClickUpClient.fetch_tasks`` returns every task in the Space, across every
-    folder in it; this filter is what narrows that down to the folders that
-    actually represent a "turma". It runs here, in the orchestration layer,
-    rather than inside ``ClickUpClient``, because it is a business rule (which
-    folders count for this pipeline) rather than an HTTP/pagination concern —
-    clients in this codebase return raw dicts without interpreting anything
-    (see architecture.md).
+    folder and list in it; this filter narrows that down to the lists in
+    ``CLICKUP_LIST_MAP``. It runs here, in the orchestration layer, rather than
+    inside ``ClickUpClient``, because it is a business rule (which lists count
+    for this pipeline) rather than an HTTP/pagination concern — clients in this
+    codebase return raw dicts without interpreting anything (see
+    architecture.md).
 
-    A folder unrelated to a "turma" could be added to the Space later, and it
-    must not silently start flowing into the pipeline, alerts, and reports just
-    by existing there (see design-decisions.md). Adding a folder here is a
-    deliberate, one-line change a human makes to ``CLICKUP_FOLDER_IDS``.
+    The filter is by list, not folder: ClickUp reports only a task's immediate
+    parent folder, so once a turma folder is split into sub-folders its id no
+    longer appears on any task, while list ids survive the reorganization (see
+    design-decisions.md). A new list must not silently start flowing into the
+    pipeline, and must not silently disappear either: every dropped list is
+    logged once per run at WARNING, so adding it to ``CLICKUP_LIST_MAP`` is a
+    deliberate decision a human makes.
 
     Args:
         raw_tasks: Task dicts as returned by ``ClickUpClient.fetch_tasks``.
 
     Returns:
-        list[dict]: Only the tasks whose ``folder.id`` is in
-        ``settings.CLICKUP_FOLDER_IDS``.
+        list[dict]: Only the tasks whose ``list.id`` is a key of
+        ``CLICKUP_LIST_MAP``.
     """
-    return [
-        task
-        for task in raw_tasks
-        if (task.get("folder") or {}).get("id") in settings.CLICKUP_FOLDER_IDS
-    ]
+    kept = []
+    dropped_lists: dict[str | None, str | None] = {}
+    dropped_count = 0
+    for task in raw_tasks:
+        task_list = task.get("list") or {}
+        if task_list.get("id") in CLICKUP_LIST_MAP:
+            kept.append(task)
+        else:
+            dropped_count += 1
+            dropped_lists[task_list.get("id")] = task_list.get("name")
+
+    if dropped_count:
+        logger.warning(
+            "ClickUp: dropped %s tasks from %s lists not in CLICKUP_LIST_MAP: %s",
+            dropped_count,
+            len(dropped_lists),
+            ", ".join(f"{list_id} ({name})" for list_id, name in dropped_lists.items()),
+        )
+
+    return kept
 
 
 def sync_clickup(etl: EtlService, postgres_client: PostgresClient, name_to_id: dict) -> list[Task]:
@@ -73,7 +91,7 @@ def sync_clickup(etl: EtlService, postgres_client: PostgresClient, name_to_id: d
     """
     client = ClickUpClient()
     raw_tasks = client.fetch_tasks(settings.CLICKUP_TEAM_ID, settings.CLICKUP_SPACE_ID)
-    raw_tasks = _filter_allowed_folders(raw_tasks)
+    raw_tasks = _filter_allowed_lists(raw_tasks)
 
     tasks = etl.transform_tasks(raw_tasks)
     details = etl.transform_details(raw_tasks)
@@ -106,13 +124,37 @@ def sync_clickup(etl: EtlService, postgres_client: PostgresClient, name_to_id: d
             logger.error("Failed to write detail %s to Postgres: %s", detail.task_id, error)
             sentry_sdk.capture_exception(error)
 
-    # Uses every task id the ClickUp list returned, not just the ones that
-    # passed validation into `tasks` — a discarded task (bad enum value,
-    # for example) is still present and active in ClickUp, so it must not be
-    # archived just because our own parsing rejected it.
+    # Uses every in-scope task id ClickUp returned (raw_tasks is already past
+    # _filter_allowed_lists), not just the ones that passed validation into
+    # `tasks` — a discarded task (bad enum value, for example) is still present
+    # and active in ClickUp, so it must not be archived just because our own
+    # parsing rejected it.
+    # The same set drives unarchiving, so the two stay symmetric: a task is
+    # archived exactly when it is missing from this set, and unarchived when it
+    # is in it, whether or not it passed validation.
     all_ids_from_clickup = {task["id"] for task in raw_tasks}
-    postgres_client.archive_missing_tasks(all_ids_from_clickup)
-    ExcelWriter.mark_archived_tasks(settings.TEMP_EXCEL_PATH, postgres_client.get_archived_tasks())
+    if not all_ids_from_clickup:
+        # An empty in-scope fetch almost always means a configuration problem
+        # (wrong Space, CLICKUP_LIST_MAP out of date, a ClickUp outage), not
+        # that every task was removed. Archiving now would archive everything.
+        logger.warning(
+            "ClickUp: no in-scope tasks returned, skipping archiving for this run; "
+            "check CLICKUP_SPACE_ID and CLICKUP_LIST_MAP"
+        )
+    else:
+        postgres_unarchived = postgres_client.unarchive_seen_tasks(all_ids_from_clickup)
+        postgres_client.archive_missing_tasks(all_ids_from_clickup)
+        excel_unarchived = ExcelWriter.unmark_archived_tasks(
+            settings.TEMP_EXCEL_PATH, all_ids_from_clickup
+        )
+        ExcelWriter.mark_archived_tasks(
+            settings.TEMP_EXCEL_PATH, postgres_client.get_archived_tasks()
+        )
+        logger.info(
+            "ClickUp: %s tasks unarchived in Postgres, %s in Excel",
+            postgres_unarchived,
+            excel_unarchived,
+        )
 
     # A discarded count well above zero means tasks are vanishing from the
     # report — usually a priority ClickUp sent that isn't in the enum.

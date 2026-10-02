@@ -170,6 +170,48 @@ class ExcelWriter:
             ) from error
 
     @staticmethod
+    def unmark_archived_tasks(file_path: str, seen_task_ids: set[str]) -> int:
+        """Clear BASE_TAREFAS.arquivada_em for every row whose task was seen again.
+
+        The mirror of :meth:`mark_archived_tasks`, driven by the same set as
+        ``PostgresClient.unarchive_seen_tasks``. Only the arquivada_em column
+        is touched.
+
+        Args:
+            file_path: Path to the local workbook.
+            seen_task_ids: Every task_id returned by this run's ClickUp fetch.
+
+        Returns:
+            int: How many rows had ``arquivada_em`` cleared.
+
+        Raises:
+            ExcelWriteError: If the workbook cannot be updated or saved.
+        """
+        unarchived = 0
+        try:
+            workbook = open_workbook(file_path)
+            worksheet = workbook["BASE_TAREFAS"]
+            table = worksheet.tables["base_tarefas"]
+            column_map = create_column_map(worksheet=worksheet, table=table)
+
+            for task_id in seen_task_ids:
+                row = find_row(worksheet, task_id, table)
+                if row is None:
+                    continue
+                cell = worksheet.cell(row=row, column=column_map["arquivada_em"])
+                if cell.value not in (None, ""):
+                    cell.value = None
+                    unarchived += 1
+
+            workbook.save(file_path)
+        except (OSError, KeyError, ValueError) as error:
+            raise ExcelWriteError(
+                f"Failed to unmark archived tasks in {file_path}: {error}"
+            ) from error
+
+        return unarchived
+
+    @staticmethod
     def _get_or_create_tag_id(worksheet, table, tag_name: str) -> int:
         """Return a tag's ID, creating the dimension row if it does not exist.
 

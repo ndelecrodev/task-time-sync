@@ -65,7 +65,7 @@ class Task(BaseModel):
         update_date: Date of the last update.
         assignee_email: Assignee e-mail, forwarded in the Teams alert.
         tags: Jira labels attached to the issue.
-        turma: Name of the ClickUp folder ("turma") the task belongs to.
+        turma: The turma the task belongs to, resolved from its ClickUp list.
     """
 
     task_id: str
