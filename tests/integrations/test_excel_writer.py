@@ -16,12 +16,13 @@ from sop_pipeline.integrations.excel_table_helpers import (
     next_row,
     expand_table,
 )
-from sop_pipeline.integrations.excel_writer import TASK_COLUMN_MAP, ExcelWriter
+from sop_pipeline.integrations.excel_writer import ExcelWriter
 from sop_pipeline.models.schemas import Priority, Task, TaskType
 
 # Column indices in the BASE_TAREFAS fixture layout (1-based).
 COL_ID = 1
 COL_TITULO = 2
+COL_DATA_CONCLUSAO = 9
 COL_DIAS_RESTANTES = 13
 COL_ATRASADO = 14
 COL_STATUS_PRAZO = 15
@@ -150,17 +151,17 @@ def test_unmark_archived_tasks_leaves_unseen_row_archived(tasks_workbook_path: s
     assert unarchived == 0
 
 
-# --- status_is_done is alert-only ---------------------------------------------------
+# --- completion cleared on reopen ---------------------------------------------------
 
 
-def test_save_tasks_does_not_write_status_is_done(tasks_workbook_path: str) -> None:
-    """status_is_done has no column mapping, so the sheet never receives it."""
-    assert "status_is_done" not in TASK_COLUMN_MAP.values()
-    task = _task("ABC-2", "Finished task").model_copy(update={"status_is_done": True})
+def test_save_tasks_clears_stale_data_conclusao(tasks_workbook_path: str) -> None:
+    """A row whose task has no completion_date any more gets data_conclusao emptied."""
+    worksheet = openpyxl.load_workbook(tasks_workbook_path)["BASE_TAREFAS"]
+    assert worksheet.cell(row=2, column=COL_DATA_CONCLUSAO).value is not None
 
-    ExcelWriter.save_tasks(tasks_workbook_path, [task])
+    ExcelWriter.save_tasks(tasks_workbook_path, [_task("ABC-1", "Reopened")])
 
     worksheet = openpyxl.load_workbook(tasks_workbook_path)["BASE_TAREFAS"]
-    headers = [cell.value for cell in worksheet[1]]
-    assert "status_is_done" not in headers
-    assert True not in [cell.value for cell in worksheet[3]]
+    assert worksheet.cell(row=2, column=COL_DATA_CONCLUSAO).value is None
+    for column in FORMULA_COLS:
+        assert str(worksheet.cell(row=2, column=column).value).startswith("=")
