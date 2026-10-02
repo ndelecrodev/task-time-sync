@@ -28,9 +28,10 @@ def test_segundo_ano_task_within_deadline_window_is_excluded(
     raw_task = make_clickup_task(
         priority={"priority": "high"},
         due_date=_millis_in_days(1),
-        folder={"id": "fake-folder-segundo-ano", "name": "Segundo Ano"},
+        list={"id": "901715802839", "name": "BI"},  # a Segundo Ano list
     )
     task = etl_service.transform_tasks([raw_task])[0]
+    assert task.turma == "Segundo Ano"
 
     result = AlertService.tasks_to_alert([task])
 

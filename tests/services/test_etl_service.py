@@ -17,7 +17,7 @@ from sop_pipeline.services.etl_service import (
     UNKNOWN_EMAIL,
     EtlService,
 )
-from tests.conftest import MAPPED_LIST_AREA, UNMAPPED_LIST_ID
+from tests.conftest import MAPPED_LIST_AREA, MAPPED_LIST_TURMA, UNMAPPED_LIST_ID
 
 ETL_LOGGER = "sop_pipeline.services.etl_service"
 
@@ -349,57 +349,85 @@ def test_transform_tasks_unassigned_task_never_consults_teams_email(
     spy.assert_not_called()
 
 
-# --- turma (ClickUp folder) --------------------------------------------------------
+# --- turma and area (CLICKUP_LIST_MAP) ---------------------------------------------
 
 
-def test_transform_tasks_extracts_turma_from_folder_name(
+def test_transform_tasks_takes_turma_and_area_from_list_not_folder(
     etl_service: EtlService, make_clickup_task
 ) -> None:
-    """turma is extracted straight from the raw task's folder.name."""
-    result = etl_service.transform_tasks([make_clickup_task()])
+    """Regression: a Primeiro Ano task in a sub-folder keeps its turma and area.
 
-    assert result[0].turma == "Primeiro Ano"
-
-
-def test_transform_tasks_uses_whichever_folder_name_the_task_carries(
-    etl_service: EtlService, make_clickup_task
-) -> None:
-    """turma reflects the task's own folder, not a hardcoded default."""
-    task = make_clickup_task(folder={"id": "fake-folder-primeiro-ano", "name": "Segundo Ano"})
+    After "Primeiro Ano" was split into sub-folders, ClickUp reports only the
+    immediate parent (here "Backend"); turma must come from the list mapping.
+    """
+    task = make_clickup_task(
+        list={"id": "901715802315", "name": "POO"},
+        folder={"id": "901711573295", "name": "Backend"},
+    )
 
     result = etl_service.transform_tasks([task])
 
-    assert result[0].turma == "Segundo Ano"
+    assert result[0].turma == "Primeiro Ano"
+    assert result[0].area == "back-end"
 
 
-def test_transform_tasks_discards_task_missing_folder(
-    etl_service: EtlService, make_clickup_task, caplog: pytest.LogCaptureFixture
+def test_transform_tasks_resolves_area_and_turma_from_mapped_list(
+    etl_service: EtlService, make_clickup_task
 ) -> None:
-    """A task with no folder key is discarded like any other malformed record.
+    """The default fixture list resolves to its mapped area and turma."""
+    result = etl_service.transform_tasks([make_clickup_task()])
 
-    No sentinel is used for turma: no path through the real pipeline can reach
-    _build_task without a folder, since pipeline._filter_allowed_folders already
-    excludes such tasks beforehand. This only covers the defensive KeyError path.
-    """
+    assert result[0].area == MAPPED_LIST_AREA
+    assert result[0].turma == MAPPED_LIST_TURMA
+
+
+def test_transform_tasks_ignores_folder_name_for_turma(
+    etl_service: EtlService, make_clickup_task
+) -> None:
+    """A folder named like another turma does not override the list mapping."""
+    task = make_clickup_task(folder={"id": "901710321390", "name": "Segundo Ano"})
+
+    result = etl_service.transform_tasks([task])
+
+    assert result[0].turma == MAPPED_LIST_TURMA
+
+
+def test_transform_tasks_keeps_task_missing_folder(
+    etl_service: EtlService, make_clickup_task
+) -> None:
+    """A task with no folder key is still converted: folder is no longer read."""
     task = make_clickup_task()
     del task["folder"]
+
+    result = etl_service.transform_tasks([task])
+
+    assert result[0].turma == MAPPED_LIST_TURMA
+
+
+@pytest.mark.parametrize(
+    "task_list",
+    [{"id": UNMAPPED_LIST_ID}, {}, None],
+    ids=["unmapped-id", "no-id", "no-list"],
+)
+def test_transform_tasks_discards_task_outside_list_map(
+    etl_service: EtlService, make_clickup_task, caplog: pytest.LogCaptureFixture, task_list
+) -> None:
+    """A task whose list is not in CLICKUP_LIST_MAP is discarded and logged.
+
+    pipeline._filter_allowed_lists keeps such tasks from ever reaching
+    _build_task; this only covers the defensive KeyError/TypeError path.
+    """
+    task = make_clickup_task()
+    if task_list is None:
+        del task["list"]
+    else:
+        task["list"] = task_list
 
     with caplog.at_level(logging.ERROR, logger=ETL_LOGGER):
         result = etl_service.transform_tasks([task])
 
     assert result == []
-
-
-# --- area resolution (ClickUp list -> area mapping) -------------------------------
-
-
-def test_transform_tasks_resolves_area_from_mapped_list(
-    etl_service: EtlService, make_clickup_task
-) -> None:
-    """A task from a list on CLICKUP_LIST_TO_AREA resolves to that list's area."""
-    result = etl_service.transform_tasks([make_clickup_task()])
-
-    assert result[0].area == MAPPED_LIST_AREA
+    assert "Discarding ClickUp task" in caplog.text
 
 
 def test_transform_tasks_resolves_area_for_another_mapped_list(
@@ -413,40 +441,6 @@ def test_transform_tasks_resolves_area_for_another_mapped_list(
     assert result[0].area == "back-end"
 
 
-def test_transform_tasks_unmapped_list_id_uses_no_area(
-    etl_service: EtlService, make_clickup_task
-) -> None:
-    """A list id that exists but has no entry in CLICKUP_LIST_TO_AREA -> NO_AREA."""
-    task = make_clickup_task(list={"id": UNMAPPED_LIST_ID})
-
-    result = etl_service.transform_tasks([task])
-
-    assert result[0].area == NO_AREA
-
-
-def test_transform_tasks_missing_list_id_uses_no_area(
-    etl_service: EtlService, make_clickup_task
-) -> None:
-    """A task whose list object has no id -> NO_AREA, not a crash."""
-    task = make_clickup_task(list={})
-
-    result = etl_service.transform_tasks([task])
-
-    assert result[0].area == NO_AREA
-
-
-def test_transform_tasks_missing_list_key_uses_no_area(
-    etl_service: EtlService, make_clickup_task
-) -> None:
-    """A task with no ``list`` key at all -> NO_AREA, not a crash."""
-    task = make_clickup_task()
-    del task["list"]
-
-    result = etl_service.transform_tasks([task])
-
-    assert result[0].area == NO_AREA
-
-
 def test_transform_tasks_resolves_area_for_a_segundo_ano_list(
     etl_service: EtlService, make_clickup_task
 ) -> None:
@@ -456,6 +450,7 @@ def test_transform_tasks_resolves_area_for_a_segundo_ano_list(
     result = etl_service.transform_tasks([task])
 
     assert result[0].area == "data"
+    assert result[0].turma == "Segundo Ano"
 
 
 def test_transform_tasks_resolves_area_for_another_segundo_ano_list(

@@ -303,22 +303,32 @@ agrupar por área depois.
 `PostgresClient.archive_missing_tasks` roda ao fim de `sync_clickup` e marca
 `tarefas.arquivada_em = now()` em toda linha cujo `task_id` não apareceu na
 busca da execução atual (`ClickUpClient.fetch_tasks(CLICKUP_TEAM_ID,
-CLICKUP_SPACE_ID)`, já filtrada por `pipeline._filter_allowed_folders`) e que
+CLICKUP_SPACE_ID)`, já filtrada por `pipeline._filter_allowed_lists`) e que
 ainda não tinha sido arquivada; a linha nunca é apagada. Antes da migração
 para ClickUp (decisão 22), essa mesma lógica rodava ao fim de `sync_jira`
 contra o `JIRA_JQL`.
 
 **Por quê:** segue a mesma filosofia da decisão 8, nunca descartar
-silenciosamente. Uma falha transitória do ClickUp ou um `CLICKUP_SPACE_ID`/
-`CLICKUP_FOLDER_IDS` mal configurado pode fazer a lista de tarefas devolvida
+silenciosamente. Uma falha transitória do ClickUp, um `CLICKUP_SPACE_ID` mal
+configurado ou uma allowlist de escopo desatualizada (decisão 23) pode fazer a
+lista de tarefas devolvida
 vir vazia ou incompleta; sem o arquivamento por timestamp, um `DELETE` nesse
 momento apagaria tarefas que continuam existindo no ClickUp, e o próximo
 `sync_clickup` bem-sucedido não teria como recuperar o que foi perdido.
 Marcar com timestamp em vez de apagar deixa o problema visível e reversível.
+A reversão é automática: `PostgresClient.unarchive_seen_tasks` limpa
+`arquivada_em` de toda tarefa cujo `task_id` está em `all_ids_from_clickup`, o
+mesmo conjunto usado para arquivar, então uma tarefa arquivada que volta a
+aparecer na busca volta a ficar ativa no próximo `sync_clickup`, mesmo que
+falhe na validação. O número de tarefas desarquivadas é registrado em nível
+INFO. Se a busca restrita ao escopo vier vazia, arquivamento e
+desarquivamento são pulados nessa execução, com um aviso WARNING: um
+resultado vazio quase sempre indica um problema de configuração, e arquivar
+nesse momento marcaria todas as tarefas.
 
 **Trade-off:** **Cuidado ao mexer nisso:**: o conjunto usado para decidir o
 que arquivar precisa ser `all_ids_from_clickup` (todo `id` devolvido pela
-busca ao ClickUp já restrita às pastas permitidas, mas antes de qualquer
+busca ao ClickUp já restrita às listas permitidas, mas antes de qualquer
 validação de `Task`), não `valid_ids` (as tarefas que já passaram pela
 validação do Pydantic, decisão 8). Usar `valid_ids` faria uma tarefa
 descartada por validação (priority fora do enum, por exemplo) ser arquivada
@@ -350,6 +360,11 @@ tinham antes de a tarefa desaparecer da busca, não serem sobrescritos ou
 zerados. Se um `task_id` vindo do Postgres não tiver linha correspondente em
 `BASE_TAREFAS` (não deveria acontecer, já que a tarefa foi escrita lá antes
 de ser arquivada), o método pula essa tarefa em vez de lançar erro.
+
+A única outra escrita nessa coluna é a limpeza:
+`ExcelWriter.unmark_archived_tasks` apaga o valor de `arquivada_em` de toda
+linha cujo `id` está em `all_ids_from_clickup`, espelhando
+`unarchive_seen_tasks` no Postgres (decisão 18).
 
 ## 20. `HISTORICO_PROGRESSO.percentual` é gravado como valor, não como fórmula do Excel
 
@@ -478,53 +493,73 @@ valor e a validação do Pydantic falha, descartando a tarefa pelo mesmo
 caminho que já existia (decisão 8) — mesmo comportamento que uma issue do
 Jira sem prioridade sempre teve.
 
-## 23. As pastas do ClickUp sincronizadas são uma allowlist explícita, não "toda pasta do Space"
+## 23. As listas do ClickUp sincronizadas são uma allowlist explícita, não "toda lista do Space"
 
 `ClickUpClient.fetch_tasks` busca todo o Space configurado em
 `CLICKUP_SPACE_ID` (`GET /team/{team_id}/task` com `space_ids[]=...`), o que
-inclui qualquer pasta que exista ali, de qualquer natureza.
-`pipeline._filter_allowed_folders` roda logo em seguida e descarta toda
-tarefa cujo `folder.id` não esteja em `CLICKUP_FOLDER_IDS` — uma lista fixa,
-configurada em `.env`, dos IDs das pastas que representam de fato uma
-"turma" (hoje "Primeiro Ano" e "Segundo Ano") — antes mesmo de `EtlService`
-enxergar essas tarefas.
+inclui qualquer pasta e lista que exista ali, de qualquer natureza.
+`pipeline._filter_allowed_lists` roda logo em seguida e descarta toda tarefa
+cujo `list.id` não seja chave de `CLICKUP_LIST_MAP` (em
+`services/etl_service.py`), antes mesmo de `EtlService` enxergar essas
+tarefas. As tarefas descartadas são registradas uma vez por execução em nível
+WARNING, com a contagem e os IDs e nomes das listas envolvidas (decisão 8).
 
-**Por quê:** a alternativa óbvia seria sincronizar automaticamente toda pasta
-que existir no Space, sem lista fixa. Isso foi deliberadamente rejeitado: uma
-pasta sem relação com uma "turma" pode ser criada no mesmo Space no futuro —
-por exemplo, uma pasta de planejamento interno da equipe, ou um experimento
-temporário — e nada nela garante que suas tarefas sigam o mesmo contrato
-(`turma`, `area`, prioridades) que o resto do pipeline espera. Sem a
-allowlist, essa pasta começaria a alimentar o pipeline, os alertas do Teams e
-os relatórios apenas por ter sido criada no Space, sem ninguém ter decidido
+`CLICKUP_LIST_MAP` associa cada ID de lista a um `ClickUpListInfo(area,
+turma)`. É a fonte única de escopo, de `area` (decisão 24) e de `turma`:
+`_build_task` lê `turma` do mapeamento, não de `folder.name`.
+
+**Por quê uma allowlist:** a alternativa óbvia seria sincronizar
+automaticamente tudo o que existir no Space. Isso foi deliberadamente
+rejeitado: uma pasta ou lista sem relação com uma turma pode ser criada no
+mesmo Space no futuro (uma pasta de planejamento interno da equipe, um
+experimento temporário), e nada nela garante que suas tarefas sigam o mesmo
+contrato (`turma`, `area`, prioridades) que o resto do pipeline espera. Sem a
+allowlist, essas tarefas começariam a alimentar o pipeline, os alertas do
+Teams e os relatórios apenas por existirem no Space, sem ninguém ter decidido
 isso conscientemente.
 
 Essa é a mesma filosofia de "nunca mudar de escopo silenciosamente" que já
 aparece neste projeto, só que na direção oposta: a decisão 8 (nunca
 descartar um registro silenciosamente) e a decisão 18 (nunca apagar uma
-tarefa arquivada silenciosamente) protegem contra **perder** dado sem
-aviso; a allowlist de pastas protege contra **ganhar** escopo sem aviso.
-Em ambos os casos, o princípio é que uma mudança de escopo — para dentro ou
-para fora — deve ser um ato deliberado, não um efeito colateral de algo
-que aconteceu em outro sistema (o Jira antes, o ClickUp agora).
+tarefa arquivada silenciosamente) protegem contra **perder** dado sem aviso;
+a allowlist protege contra **ganhar** escopo sem aviso. Uma mudança de escopo,
+para dentro ou para fora, deve ser um ato deliberado e não um efeito colateral
+de algo que aconteceu em outro sistema (o Jira antes, o ClickUp agora).
 
-**Trade-off:** quando uma nova turma for criada de fato (por exemplo,
-"Terceiro Ano"), sincronizá-la exige uma ação manual: alguém precisa
-adicionar o ID da nova pasta a `CLICKUP_FOLDER_IDS` e reiniciar a execução
-agendada. Não há descoberta automática de novas turmas. Esse atrito é
-proposital — é o preço de nunca incluir uma pasta por engano.
+**Por quê por lista, e não por pasta:** a primeira versão desta allowlist era
+por pasta (`CLICKUP_FOLDER_IDS`, em `.env`, com os IDs das pastas "Primeiro
+Ano" e "Segundo Ano"). Em setembro de 2026 a pasta "Primeiro Ano" foi
+reorganizada em sub-pastas (Backend, Frontend e design, Dados, Gerenciamento
+do projeto). A API do ClickUp informa só a pasta imediatamente acima da
+tarefa: uma tarefa da lista POO passou a chegar com `folder: {"id":
+"901711573295", "name": "Backend"}`, sem nenhuma referência a "Primeiro Ano".
+O filtro por pasta descartou todas as tarefas do Primeiro Ano, e
+`archive_missing_tasks` arquivou 37 delas na execução de 2026-09-26. Os IDs
+das listas não mudaram, porque as listas foram movidas e não recriadas. A
+lista é o identificador que sobrevive a esse tipo de reorganização, e o
+mapeamento por lista já existia para resolver a área. O mesmo problema
+afetava `turma`, que era lida de `folder.name` e teria passado a valer
+"Backend".
+
+**Trade-off:** toda lista nova precisa de uma entrada em `CLICKUP_LIST_MAP`,
+com área e turma, para entrar no pipeline. Sem ela, as tarefas da lista são
+descartadas e só aparecem no aviso WARNING de `_filter_allowed_lists`. Isso
+vale também para uma turma nova (por exemplo, "Terceiro Ano"): criar a pasta
+não basta, cada lista dela precisa ser cadastrada. Como o mapeamento é uma
+constante no código, a mudança passa por commit e deploy. É o mesmo atrito
+proposital da versão por pasta, agora com granularidade de lista: nenhuma
+lista entra por engano, e nenhuma some sem aviso.
 
 ## 24. `area` passou do campo customizado `drop_down`, preenchido manualmente, para um mapeamento fixo de lista do ClickUp
 
 Antes, `area` vinha de um campo customizado `drop_down` do ClickUp
 (`CLICKUP_AREA_FIELD_ID`), preenchido tarefa por tarefa por quem criava ou
 gerenciava a tarefa. Esse mecanismo foi removido por completo: `_build_task`
-agora lê `task["list"]["id"]` e resolve contra `EtlService.CLICKUP_LIST_TO_AREA`,
-um dicionário fixo com uma entrada por lista do ClickUp que representa uma
-disciplina do curso (ex.: `"901715802295": "front-end"` para a lista
-"Desenvolvimento 1"). Quando o `id` da lista não está no dicionário, o
-resultado é `NO_AREA`, o mesmo sentinela usado antes para o campo não
-preenchido.
+agora lê `task["list"]["id"]` e resolve contra `CLICKUP_LIST_MAP`, um
+dicionário fixo com uma entrada por lista do ClickUp que representa uma
+disciplina do curso (ex.: `"901715802295": ClickUpListInfo("front-end",
+"Primeiro Ano")` para a lista "Desenvolvimento 1"). Uma lista fora do
+dicionário nem chega a `_build_task`: a decisão 23 a descarta antes, com aviso.
 
 **Por quê:** o campo customizado dependia de alguém lembrar de preenchê-lo em
 cada tarefa, e na prática quase ninguém preenchia — a esmagadora maioria das
@@ -535,25 +570,20 @@ de qualquer forma — não depende de nenhuma ação humana extra por tarefa. Mo
 a resolução de área para esse dado elimina a fonte do problema em vez de
 lembrar as pessoas de preencher um campo.
 
-Por que um dicionário Python fixo em vez de uma variável em `.env`, ao
-contrário de `CLICKUP_FOLDER_IDS`: `CLICKUP_LIST_TO_AREA` é uma regra de
+Por que um dicionário Python fixo em vez de uma variável em `.env`:
+`CLICKUP_LIST_MAP` é uma regra de
 currículo/negócio amarrada à estrutura de listas deste programa específico —
 quais listas existem e a que disciplina cada uma corresponde é algo que muda
 tão raramente quanto o próprio currículo, e faz parte da lógica de negócio do
 pipeline, não de uma credencial ou de um escopo que varia por ambiente.
-`CLICKUP_FOLDER_IDS` continua em `.env` porque, ao contrário disso, ele varia
-genuinamente conforme o que está sendo sincronizado (que turmas estão ativas
-agora), o que é justamente o tipo de coisa que uma variável de ambiente existe
-para capturar.
 
-**Trade-off:** a mesma categoria de atrito deliberado da decisão 23. Uma nova
-lista criada numa pasta já permitida, sem uma entrada correspondente em
-`CLICKUP_LIST_TO_AREA`, cai silenciosamente em `NO_AREA` até alguém atualizar
-o dicionário. Não há descoberta automática de área a partir do nome da lista
-ou de qualquer outro sinal — atualizar o mapeamento é um ato manual e
-consciente, na mesma linha da allowlist de pastas: mudar o que o pipeline
-reconhece deve ser deliberado, não um efeito colateral de uma lista nova
-aparecer no ClickUp.
+**Trade-off:** a mesma categoria de atrito deliberado da decisão 23. Uma
+lista nova sem entrada em `CLICKUP_LIST_MAP` fica fora do pipeline, com um
+aviso WARNING por execução, até alguém atualizar o dicionário. Não há
+descoberta automática de área a partir do nome da lista ou de qualquer outro
+sinal. Atualizar o mapeamento é um ato manual e consciente: mudar o que o
+pipeline reconhece deve ser deliberado, não um efeito colateral de uma lista
+nova aparecer no ClickUp.
 
 ## 25. Tarefas de "Segundo Ano" são excluídas dos alertas do Teams, mas continuam em todo o resto do pipeline
 
@@ -566,11 +596,11 @@ adicional é assumida aqui além dessa escolha.
 
 **Por quê a exclusão vive em `AlertService`, e não simplesmente deixando de
 buscar tarefas de "Segundo Ano"`:** ao contrário da decisão 23 (a allowlist de
-pastas do ClickUp), onde tarefas de pastas fora de `CLICKUP_FOLDER_IDS` não
+listas do ClickUp), onde tarefas de listas fora de `CLICKUP_LIST_MAP` não
 devem existir no sistema de jeito nenhum e por isso são cortadas já na busca,
 aqui o dado continua necessário em todo lugar — Excel, Postgres e dashboard
 precisam mostrar tarefas de "Segundo Ano" normalmente, só o caminho de alerta
-do Teams é afetado. Cortar na busca (como a allowlist de pastas faz) removeria
+do Teams é afetado. Cortar na busca (como a allowlist de listas faz) removeria
 a turma do sistema inteiro, não só do Teams — errado para esta regra. A
 exclusão fica isolada em `AlertService`, então `sync_clickup`, `ExcelWriter` e
 `PostgresClient` seguem exatamente como estavam, sem nenhuma mudança.
