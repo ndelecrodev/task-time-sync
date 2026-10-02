@@ -17,20 +17,19 @@ import pytest
 # the standard pytest idiom, not the bug redefined-outer-name is meant to catch.
 # pylint: disable=redefined-outer-name
 
-# A ClickUp list id present in EtlService.CLICKUP_LIST_TO_AREA, and its mapped
-# area — the default `make_clickup_task` list, so a task is mapped to an area
+# A ClickUp list id present in etl_service.CLICKUP_LIST_MAP, with its mapped
+# area and turma — the default `make_clickup_task` list, so a task is in scope
 # out of the box. Also a list id deliberately absent from that mapping, for the
-# NO_AREA fallback tests.
+# list-filter tests.
 MAPPED_LIST_ID = "901715802295"
 MAPPED_LIST_AREA = "front-end"
+MAPPED_LIST_TURMA = "Primeiro Ano"
 UNMAPPED_LIST_ID = "901700000000"
 
-# The fake folder ("turma") every make_clickup_task default lives in, and one
-# folder deliberately NOT on the CLICKUP_FOLDER_IDS allowlist below, for the
-# folder-filter tests.
-ALLOWED_FOLDER_ID = "fake-folder-primeiro-ano"
-ALLOWED_FOLDER_NAME = "Primeiro Ano"
-DISALLOWED_FOLDER_ID = "fake-folder-not-a-turma"
+# The folder every make_clickup_task default reports. Its name is deliberately
+# not a turma: ClickUp only reports a task's immediate parent folder (here a
+# sub-folder of "Primeiro Ano"), and turma must come from CLICKUP_LIST_MAP.
+SUBFOLDER = {"id": "901711573295", "name": "Backend"}
 
 # Obviously fake, example.com-style values for every variable Settings requires.
 # Real environment variables outrank the .env file in pydantic-settings, so these
@@ -41,7 +40,6 @@ _FAKE_ENV = {
     "CLICKUP_API_TOKEN": "fake-clickup-token",
     "CLICKUP_TEAM_ID": "fake-team-id",
     "CLICKUP_SPACE_ID": "fake-space-id",
-    "CLICKUP_FOLDER_IDS": ALLOWED_FOLDER_ID,
     "API_KEY_CLOCKIFY": "fake-clockify-key",
     "WORKSPACE_ID": "fake-workspace-id",
     "WEBHOOK_TI": "https://teams.example.com/ti",
@@ -114,7 +112,8 @@ def make_clickup_task():
     """Factory for a raw ClickUp task dict; keyword overrides replace top-level keys.
 
     The defaults describe one fully valid task assigned to Alice, in a list
-    mapped to the "front-end" area (see :data:`MAPPED_LIST_ID`). Pass
+    mapped to the "front-end" area and the "Primeiro Ano" turma (see
+    :data:`MAPPED_LIST_ID`). Pass
     ``task_id`` to change the task's ClickUp id, or any top-level key (e.g.
     ``priority={"priority": "urgent"}`` or ``priority=None``) to build the
     malformed variants the tests need.
@@ -129,7 +128,7 @@ def make_clickup_task():
             ],
             "priority": {"priority": "high"},
             "status": {"status": "In Progress"},
-            "list": {"id": MAPPED_LIST_ID},
+            "list": {"id": MAPPED_LIST_ID, "name": "Desenvolvimento 1"},
             "date_created": "1735689600000",
             "due_date": "1738368000000",
             "date_closed": None,
@@ -138,7 +137,7 @@ def make_clickup_task():
             "tags": [{"name": "backend"}],
             "description": "Full description",
             "text_content": None,
-            "folder": {"id": ALLOWED_FOLDER_ID, "name": ALLOWED_FOLDER_NAME},
+            "folder": dict(SUBFOLDER),
         }
         task.update(overrides)
         return task

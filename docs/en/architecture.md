@@ -31,8 +31,8 @@ An execution (`sop_pipeline.pipeline.run`) is a linear sequence with three isola
                                page number, GET /team/{team_id}/task
         │  raw list[dict] (every task in the Space, from any folder)
         ▼
-    pipeline._filter_allowed_folders
-        │  drops tasks whose folder.id isn't in CLICKUP_FOLDER_IDS
+    pipeline._filter_allowed_lists
+        │  drops (with a WARNING) tasks whose list.id isn't in CLICKUP_LIST_MAP
         ▼
     EtlService.transform_tasks    ─▶ list[Task]
     EtlService.transform_details  ─▶ list[TaskDetail]

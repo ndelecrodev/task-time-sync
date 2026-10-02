@@ -275,22 +275,30 @@ to group by area later.
 `PostgresClient.archive_missing_tasks` runs at the end of `sync_clickup` and
 sets `tarefas.arquivada_em = now()` on every row whose `task_id` didn't show
 up in the current run's fetch (`ClickUpClient.fetch_tasks(CLICKUP_TEAM_ID,
-CLICKUP_SPACE_ID)`, already filtered by `pipeline._filter_allowed_folders`)
+CLICKUP_SPACE_ID)`, already filtered by `pipeline._filter_allowed_lists`)
 and that wasn't already archived; the row is never deleted. Before the
 ClickUp migration (decision 22), this same logic ran at the end of
 `sync_jira` against `JIRA_JQL`.
 
 **Why:** follows the same philosophy as decision 8, never discard silently.
-A transient ClickUp failure or a misconfigured `CLICKUP_SPACE_ID`/
-`CLICKUP_FOLDER_IDS` can make the returned task list come back empty or
-incomplete; without timestamp archiving, a `DELETE` at that point would wipe
+A transient ClickUp failure, a misconfigured `CLICKUP_SPACE_ID` or an
+outdated scope allowlist (decision 23) can make the returned task list come
+back empty or incomplete; without timestamp archiving, a `DELETE` at that point would wipe
 out tasks that still exist in ClickUp, and the next successful
 `sync_clickup` would have no way to recover what was lost. Marking with a
 timestamp instead of deleting keeps the problem visible and reversible.
+The reversal is automatic: `PostgresClient.unarchive_seen_tasks` clears
+`arquivada_em` on every task whose `task_id` is in `all_ids_from_clickup`, the
+same set used for archiving, so an archived task that shows up in the fetch
+again becomes active on the next `sync_clickup`, even if it fails validation.
+The number of unarchived tasks is logged at INFO. If the in-scope fetch comes
+back empty, archiving and unarchiving are skipped for that run with a
+WARNING: an empty result almost always points to a configuration problem, and
+archiving at that point would mark every task.
 
 **Trade-off:** Caution when touching this: the set used to decide what to
 archive must be `all_ids_from_clickup` (every `id` the ClickUp fetch
-returned once already narrowed down to the allowed folders, but before any
+returned once already narrowed down to the allowed lists, but before any
 `Task` validation), not `valid_ids` (the tasks that already passed Pydantic
 validation, decision 8). Using `valid_ids` would archive a task discarded by
 validation (an out-of-enum `priority`, for example) as if it had disappeared
@@ -322,6 +330,11 @@ task dropped out of the fetch, not get overwritten or cleared. If a
 `task_id` coming from Postgres has no matching row in `BASE_TAREFAS` (it
 shouldn't, since the task was written there before being archived), the
 method skips it instead of raising.
+
+The only other write to this column is the clear:
+`ExcelWriter.unmark_archived_tasks` empties `arquivada_em` on every row whose
+`id` is in `all_ids_from_clickup`, mirroring `unarchive_seen_tasks` in
+Postgres (decision 18).
 
 ## 20. `HISTORICO_PROGRESSO.percentual` is written as a value, not an Excel formula
 
@@ -448,52 +461,71 @@ ever adopts Custom Task Types, `_build_task` will need revisiting to map
 task through the same path that already existed (decision 8) — the same
 behavior a priority-less Jira issue always had.
 
-## 23. Synced ClickUp folders are an explicit allowlist, not "every folder in the Space"
+## 23. Synced ClickUp lists are an explicit allowlist, not "every list in the Space"
 
 `ClickUpClient.fetch_tasks` fetches the whole Space configured in
 `CLICKUP_SPACE_ID` (`GET /team/{team_id}/task` with `space_ids[]=...`),
-which includes any folder that exists there, of any kind.
-`pipeline._filter_allowed_folders` runs right after and drops every task
-whose `folder.id` isn't in `CLICKUP_FOLDER_IDS` — a fixed list, configured
-in `.env`, of the folder IDs that actually represent a "turma" (today
-"Primeiro Ano" and "Segundo Ano") — before `EtlService` ever sees those
-tasks.
+which includes any folder and list that exists there, of any kind.
+`pipeline._filter_allowed_lists` runs right after and drops every task whose
+`list.id` isn't a key of `CLICKUP_LIST_MAP` (in `services/etl_service.py`),
+before `EtlService` ever sees those tasks. Dropped tasks are logged once per
+run at WARNING level, with the count and the ids and names of the lists
+involved (decision 8).
 
-**Why:** the obvious alternative would be to automatically sync every
-folder that exists in the Space, with no fixed list. That was deliberately
-rejected: a folder unrelated to a "turma" could be created in the same
-Space later — an internal team-planning folder, say, or a temporary
-experiment — and nothing about it guarantees its tasks follow the same
-contract (`turma`, `area`, priorities) the rest of the pipeline expects.
-Without the allowlist, that folder would start feeding the pipeline, Teams
-alerts, and reports just by having been created in the Space, without
-anyone having made that call on purpose.
+`CLICKUP_LIST_MAP` maps each list id to a `ClickUpListInfo(area, turma)`. It
+is the single source of scope, of `area` (decision 24) and of `turma`:
+`_build_task` reads `turma` from the mapping, not from `folder.name`.
+
+**Why an allowlist:** the obvious alternative would be to automatically sync
+everything that exists in the Space. That was deliberately rejected: a folder
+or list unrelated to a turma could be created in the same Space later (an
+internal team-planning folder, a temporary experiment), and nothing about it
+guarantees its tasks follow the same contract (`turma`, `area`, priorities)
+the rest of the pipeline expects. Without the allowlist, those tasks would
+start feeding the pipeline, Teams alerts and reports just by existing in the
+Space, without anyone having made that call on purpose.
 
 This is the same "never change scope silently" philosophy already present
-in this project, just pointed the other way: decision 8 (never silently
-discard a record) and decision 18 (never silently delete an archived task)
-guard against **losing** data without warning; the folder allowlist guards
-against **gaining** scope without warning. In both cases, the principle is
-that a scope change — in or out — should be a deliberate act, not a side
-effect of something that happened in another system (Jira before, ClickUp
-now).
+in this project, pointed the other way: decision 8 (never silently discard a
+record) and decision 18 (never silently delete an archived task) guard
+against **losing** data without warning; the allowlist guards against
+**gaining** scope without warning. A scope change, in or out, should be a
+deliberate act and not a side effect of something that happened in another
+system (Jira before, ClickUp now).
 
-**Trade-off:** when a new turma is actually created (say, "Terceiro Ano"),
-syncing it requires a manual action: someone has to add the new folder's ID
-to `CLICKUP_FOLDER_IDS` and let the scheduled run pick it up. There's no
-automatic discovery of new turmas. That friction is deliberate — it's the
-price of never including a folder by accident.
+**Why by list and not by folder:** the first version of this allowlist was by
+folder (`CLICKUP_FOLDER_IDS`, in `.env`, holding the "Primeiro Ano" and
+"Segundo Ano" folder ids). In September 2026 the "Primeiro Ano" folder was
+reorganized into sub-folders (Backend, Frontend e design, Dados,
+Gerenciamento do projeto). The ClickUp API reports only a task's immediate
+parent folder: a task from the POO list started arriving with
+`folder: {"id": "901711573295", "name": "Backend"}` and no reference to
+"Primeiro Ano" anywhere. The folder filter dropped every Primeiro Ano task,
+and `archive_missing_tasks` archived 37 of them in the 2026-09-26 run. The
+list ids did not change, because the lists were moved and not recreated. The
+list is the identifier that survives this kind of reorganization, and the
+per-list mapping already existed to resolve the area. The same problem hit
+`turma`, which was read from `folder.name` and would have become "Backend".
+
+**Trade-off:** every new list needs an entry in `CLICKUP_LIST_MAP`, with area
+and turma, before it enters the pipeline. Without one, the list's tasks are
+dropped and only show up in the WARNING from `_filter_allowed_lists`. This
+also applies to a new turma (say, "Terceiro Ano"): creating the folder is not
+enough, each of its lists has to be registered. Since the mapping is a
+constant in code, the change goes through a commit and a deploy. It is the
+same deliberate friction as the folder version, now at list granularity: no
+list enters by accident, and none disappears without a warning.
 
 ## 24. `area` moved from a manually-filled `drop_down` custom field to a fixed ClickUp-list mapping
 
 Previously, `area` came from a ClickUp `drop_down` custom field
 (`CLICKUP_AREA_FIELD_ID`), filled in per task by whoever created or managed
 it. That mechanism was removed entirely: `_build_task` now reads
-`task["list"]["id"]` and resolves it against `EtlService.CLICKUP_LIST_TO_AREA`,
-a fixed dict with one entry per ClickUp list that represents a course subject
-(e.g. `"901715802295": "front-end"` for the "Desenvolvimento 1" list). When a
-list's `id` isn't in the dict, the result is `NO_AREA`, the same sentinel
-previously used for the unfilled field.
+`task["list"]["id"]` and resolves it against `CLICKUP_LIST_MAP`, a fixed
+dict with one entry per ClickUp list that represents a course subject (e.g.
+`"901715802295": ClickUpListInfo("front-end", "Primeiro Ano")` for the
+"Desenvolvimento 1" list). A list missing from the dict never reaches
+`_build_task`: decision 23 drops it first, with a warning.
 
 **Why:** the custom field depended on someone remembering to fill it in on
 every task, and in practice almost nobody did — the overwhelming majority of
@@ -504,22 +536,18 @@ maps 1:1 onto a course subject and is data the task already carries regardless
 data removes the source of the problem instead of reminding people to fill in
 a field.
 
-Why a fixed Python dict rather than an `.env` setting, unlike
-`CLICKUP_FOLDER_IDS`: `CLICKUP_LIST_TO_AREA` is a curriculum/business rule
+Why a fixed Python dict rather than an `.env` setting:
+`CLICKUP_LIST_MAP` is a curriculum/business rule
 tied to this specific program's list structure — which lists exist and which
 subject each maps to changes about as rarely as the curriculum itself, and is
 part of the pipeline's business logic, not a credential or an
-environment-varying scope. `CLICKUP_FOLDER_IDS` stays in `.env` because,
-unlike this, it genuinely varies by what's being synced (which turmas are
-currently active), which is exactly what an environment variable exists to
-capture.
+environment-varying scope.
 
-**Trade-off:** the same category of deliberate friction as decision 23. A new
-list created in an already-allowed folder, without a matching entry in
-`CLICKUP_LIST_TO_AREA`, silently falls back to `NO_AREA` until someone updates
-the dict. There's no automatic area discovery from the list's name or any
-other signal — updating the mapping is a manual, conscious act, the same way
-the folder allowlist works: changing what the pipeline recognizes should be
+**Trade-off:** the same category of deliberate friction as decision 23. A
+new list without an entry in `CLICKUP_LIST_MAP` stays out of the pipeline,
+with one WARNING per run, until someone updates the dict. There's no automatic
+area discovery from the list's name or any other signal. Updating the mapping
+is a manual, conscious act: changing what the pipeline recognizes should be
 deliberate, not a side effect of a new list showing up in ClickUp.
 
 ## 25. "Segundo Ano" tasks are excluded from Teams alerts, but stay in everything else in the pipeline
@@ -532,12 +560,12 @@ bare literal buried in the filter. The rule is a product-owner decision:
 justification is assumed here beyond that choice.
 
 **Why the exclusion lives in `AlertService`, rather than simply not fetching
-"Segundo Ano" tasks at all:** unlike decision 23 (the ClickUp folder
-allowlist), where tasks from folders outside `CLICKUP_FOLDER_IDS` shouldn't
+"Segundo Ano" tasks at all:** unlike decision 23 (the ClickUp list
+allowlist), where tasks from lists outside `CLICKUP_LIST_MAP` shouldn't
 exist in the system at all and are therefore cut at the fetch step, here the
 data is still needed everywhere else — Excel, Postgres, and the dashboard all
 need to show "Segundo Ano" tasks normally; only the Teams alert path is
-affected. Cutting at the fetch step (the way the folder allowlist does) would
+affected. Cutting at the fetch step (the way the list allowlist does) would
 remove the turma from the whole system, not just from Teams — wrong for this
 rule. The exclusion stays isolated inside `AlertService`, so `sync_clickup`,
 `ExcelWriter`, and `PostgresClient` are unchanged, exactly as they were.
@@ -575,3 +603,38 @@ would conflate these two responsibilities: it would break identity matching
 to solve a problem that is purely about notifications. Keeping the two
 fields separate leaves each free to change for its own reason, without a
 side effect on the other.
+
+## 27. Alerts stop when the ClickUp status type is "done" or "closed"; data completion stays tied to `date_closed`
+
+Every ClickUp status has a `type` (`open`, `unstarted`, `custom`, `done` or
+`closed`) on top of the free-text name that goes into `Task.status`
+(decision 11). `EtlService._build_task` sets `Task.status_is_done` to `True`
+when that type is in `FINISHED_STATUS_TYPES` (`done` or `closed`), and
+`AlertService.tasks_to_alert` drops every task with `status_is_done` set, in
+addition to the existing `completion_date` rule. A status with no type counts
+as not finished. `status_is_done` has no column in `BASE_TAREFAS` or in
+`tarefas`: it exists only for the alert rule.
+
+`completion_date` still comes from `date_closed`, as before. So
+`data_conclusao` in Excel and Postgres, the `status_prazo` formula, the
+`CALCULOS`/`INDICADORES` metrics and the dashboard only treat a task as
+completed once it is in a `closed` status.
+
+**Why:** ClickUp only fills `date_closed` when a task reaches a status of type
+`closed`. Every list in `CLICKUP_LIST_MAP` has a `done` status (type `done`)
+before `Closed` (type `closed`), and a task marked `done` kept getting Teams
+deadline alerts until someone closed it. For whoever receives the alert, that
+task is already delivered. Comparing by type instead of by name avoids
+depending on status names, which differ per workspace and have already
+changed from Portuguese to English once.
+
+The change is limited to alerts by the product owner's decision. Moving
+`completion_date` to `done` would change `data_conclusao`, the completion
+percentage in `HISTORICO_PROGRESSO` and every metric that depends on
+"completed", which would require reviewing what each metric should count.
+
+**Trade-off:** this leaves an accepted inconsistency. A task in a `done`
+status past its due date shows "Atrasado" in the spreadsheet and the
+dashboard, because `data_conclusao` stays empty until the task is closed, yet
+it no longer alerts on Teams. Anyone comparing both sides will find late
+tasks with no alert, and that behavior is expected.
