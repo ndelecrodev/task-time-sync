@@ -66,6 +66,10 @@ class Task(BaseModel):
         assignee_email: Assignee e-mail, forwarded in the Teams alert.
         tags: Jira labels attached to the issue.
         turma: The turma the task belongs to, resolved from its ClickUp list.
+        status_is_done: True when the source status belongs to a finished
+            category (ClickUp status type "done" or "closed"). Used only by the
+            alert rule, never persisted. The default False keeps existing tests
+            and fixtures valid.
     """
 
     task_id: str
@@ -83,6 +87,7 @@ class Task(BaseModel):
     assignee_email: EmailStr | None = None
     tags: list[str] = Field(default_factory=list)
     turma: str
+    status_is_done: bool = False
 
     @computed_field
     @property

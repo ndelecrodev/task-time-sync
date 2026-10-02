@@ -28,6 +28,11 @@ CLICKUP_PRIORITY_MAP = {
     "low": "Low",
 }
 
+# ClickUp status types that mean the work is finished. Every status carries one
+# of "open", "unstarted", "custom", "done" or "closed"; the status name itself
+# is free text and differs per workspace, so the type is what gets compared.
+FINISHED_STATUS_TYPES = frozenset({"done", "closed"})
+
 # Errors that must cost a single record, never the whole batch. AttributeError and
 # TypeError belong here because an unexpected null in a ClickUp/Clockify payload
 # surfaces as one of those, and without them a single bad record aborts the loop
@@ -216,6 +221,12 @@ class EtlService:
         # ClickUp reports is only the immediate parent (e.g. "Backend").
         list_info = CLICKUP_LIST_MAP[raw_task["list"]["id"]]
 
+        # Only the alert rule reads this; completion_date stays tied to
+        # date_closed (see design-decisions.md). A missing status or type means
+        # "not finished", never a discarded task.
+        raw_status = raw_task.get("status")
+        status_type = raw_status.get("type") if isinstance(raw_status, dict) else None
+
         return Task(
             task_id=raw_task["id"],
             title=raw_task.get("name", "No title"),
@@ -232,6 +243,7 @@ class EtlService:
             assignee_email=assignee_email,
             tags=[tag.get("name") for tag in raw_task.get("tags", [])],
             turma=list_info.turma,
+            status_is_done=status_type in FINISHED_STATUS_TYPES,
         )
 
     @staticmethod
