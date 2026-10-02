@@ -340,3 +340,39 @@ def test_sync_task_assignees_is_idempotent_when_links_match() -> None:
 
     session.add.assert_not_called()
     session.execute.assert_not_called()
+
+
+# --- tarefa_pai_id ---------------------------------------------------------------
+
+
+def test_upsert_task_inserts_parent_id_of_a_subtask() -> None:
+    """A subtask's parent id goes into tarefa_pai_id and tipo is Subtask."""
+    subtask = _task(task_id="ABC-2").model_copy(
+        update={"parent_task_id": "ABC-1", "task_type": TaskType.SUBTASK}
+    )
+    with patched_session() as session:
+        session.scalars.return_value = _scalar_result(None)
+        _client().upsert_task(task=subtask, responsavel_id=None)
+
+    added = session.add.call_args.args[0]
+    assert added.tarefa_pai_id == "ABC-1"
+    assert added.tipo == TaskType.SUBTASK
+
+
+def test_upsert_task_updates_parent_id_of_existing_row() -> None:
+    """The update branch overwrites tarefa_pai_id, including back to None."""
+    existing = SimpleNamespace(task_id="ABC-2", tarefa_pai_id="OLD-PARENT")
+    with patched_session() as session:
+        session.scalars.return_value = _scalar_result(existing)
+        _client().upsert_task(task=_task(task_id="ABC-2"), responsavel_id=None)
+
+    assert existing.tarefa_pai_id is None
+    session.add.assert_not_called()
+
+
+def test_tarefa_pai_id_has_no_foreign_key() -> None:
+    """tarefa_pai_id stays a plain nullable column; a FK would reject orphan subtasks."""
+    column = Tarefas.__table__.c.tarefa_pai_id
+
+    assert column.nullable
+    assert not column.foreign_keys

@@ -165,7 +165,8 @@ def sync_clickup(etl: EtlService, postgres_client: PostgresClient, name_to_id: d
         )
 
     # A discarded count well above zero means tasks are vanishing from the
-    # report — usually a priority ClickUp sent that isn't in the enum.
+    # report, for example a non-null priority label missing from
+    # CLICKUP_PRIORITY_MAP. A task with no priority set is not discarded.
     logger.info(
         "ClickUp: %s tasks fetched, %s tasks written, %s discarded",
         len(raw_tasks),
