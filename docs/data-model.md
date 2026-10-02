@@ -65,19 +65,20 @@ ClickUp).
 | `task_id` | `str` | `id` |
 | `title` | `str` | `name` (default `"No title"`) |
 | `assignee` | `str` | `assignees[*].username`/`.email`, normalizados individualmente e concatenados com `", "` |
-| `priority` | `Priority` | `priority.priority` (`urgent`/`high`/`normal`/`low`), mapeado para o enum |
+| `priority` | `Priority` | `priority.priority` (`urgent`/`high`/`normal`/`low`), mapeado para o enum; `priority` nulo ou ausente vira `Sem prioridade`. Ver [`design-decisions.md`](design-decisions.md#29) |
 | `status` | `str` | `status.status` |
 | `area` | `str \| None` | `list.id` resolvido contra o mapeamento fixo `CLICKUP_LIST_MAP` (campo `area`) |
 | `creation_date` | `date` | `date_created` (timestamp em milissegundos) |
 | `due_date` | `date \| None` | `due_date` (timestamp em milissegundos) |
 | `completion_date` | `date \| None` | `date_closed`, com fallback em `date_done` (timestamp em milissegundos), só quando `status.type` é `done` ou `closed`; senão `None`. Ver [`design-decisions.md`](design-decisions.md#28) |
-| `task_type` | `TaskType` | fixo em `TaskType.TASK` — ver [`design-decisions.md`](design-decisions.md#22) |
+| `task_type` | `TaskType` | `TaskType.SUBTASK` quando `parent` está preenchido, senão `TaskType.TASK`. Ver [`design-decisions.md`](design-decisions.md#29) |
 | `creator` | `str \| None` | `creator.username` |
 | `update_date` | `date \| None` | `date_updated` (timestamp em milissegundos) |
 | `assignee_email` | `EmailStr \| None` | `EmployeeRegistry.get_teams_email` quando definido; senão `assignees[0].email`, com fallback em `EmployeeRegistry.get_registered_email` |
 | `tags` | `list[str]` | `tags[*].name` |
 | `turma` | `str` | `list.id` resolvido contra o mapeamento fixo `CLICKUP_LIST_MAP` (campo `turma`); `folder.name` não é usado, ver [`design-decisions.md`](design-decisions.md#23) |
 | `assignee_names` | `list[str]` | nome canônico de cada assignee, na ordem do ClickUp; não é gravado no Excel, alimenta `tarefa_responsavel` |
+| `parent_task_id` | `str \| None` | `parent`, o id do pai imediato de uma subtarefa; `None` para tarefa sem pai. O pai pode não estar na mesma execução. Ver [`design-decisions.md`](design-decisions.md#29) |
 
 **Múltiplos responsáveis:** ao contrário do Jira, o ClickUp permite mais de um
 assignee por tarefa. Cada um é normalizado individualmente por
@@ -159,14 +160,16 @@ própria. Chave de upsert: `task_id`.
 
 | Enum | Valores |
 |---|---|
-| `Priority` | `Highest`, `High`, `Medium`, `Low`, `Lowest` |
+| `Priority` | `Highest`, `High`, `Medium`, `Low`, `Lowest`, `Sem prioridade` |
 | `TaskType` | `Bug`, `Task`, `Story`, `Epic`, `Subtask` |
 | `DeadlineStatus` | `Concluído`, `Atrasado`, `Atenção`, `No prazo`, `Sem prazo` |
 
 Os valores de `Priority` são os rótulos históricos do Jira; o ETL mapeia os
 quatro níveis de prioridade do ClickUp (`urgent`/`high`/`normal`/`low`) para
-eles — ver [`design-decisions.md`](design-decisions.md#22). `TaskType` fica
-fixo em `Task` para toda tarefa vinda do ClickUp, pelo mesmo motivo. Os
+eles (ver [`design-decisions.md`](design-decisions.md#22)), e uma tarefa sem
+prioridade recebe `Sem prioridade`, que alerta com a janela de `Medium` (ver
+[`design-decisions.md`](design-decisions.md#29)). Uma tarefa vinda do ClickUp
+recebe `TaskType` `Subtask` quando tem pai e `Task` quando não tem. Os
 valores de `DeadlineStatus` são exatamente as strings que a fórmula da coluna
 `status_prazo` produz no Excel. **Nenhum desses valores pode ser traduzido** —
 só os nomes dos membros do enum.
@@ -182,7 +185,7 @@ minúsculas, primeira coluna sempre é o ID usado no upsert.
 
 | Aba | Tabela | Colunas | Escrita por |
 |---|---|---|---|
-| `BASE_TAREFAS` | `base_tarefas` | id, titulo, responsavel, area, prioridade, status, data_criacao, prazo, data_conclusao, **dias_restantes**, **atrasado**, **status_prazo**, tipo, criador, data_atualizacao, arquivada_em, turma | `save_tasks` |
+| `BASE_TAREFAS` | `base_tarefas` | id, titulo, responsavel, area, prioridade, status, data_criacao, prazo, data_conclusao, **dias_restantes**, **atrasado**, **status_prazo**, tipo, criador, data_atualizacao, arquivada_em, turma, tarefa_pai_id | `save_tasks` |
 | `DETALHES_TAREFA` | `detalhes_tarefa` | id, descricao | `save_details` |
 | `BASE_HORAS` | `base_horas` | id, funcionario, data, horas | `save_hours` |
 | `DIM_ETIQUETAS` | `dim_etiquetas` | id_etiqueta, nome_etiqueta | `save_tags` |
@@ -258,7 +261,7 @@ gravação equivalente na aba correspondente do `.xlsx`.
 | Tabela | Papel | Upsert por |
 |---|---|---|
 | `funcionarios` | Identidade de colaboradores, sincronizada a partir de `DIM_FUNCIONARIO`. Inclui `photo_url`, a URL da foto usada pelo dashboard, e `teams_email`, que sobrepõe `clickup_email` especificamente para @menções do Teams quando os dois divergem (ver [`design-decisions.md`](design-decisions.md#26)). | `upsert_employee` |
-| `tarefas` | Uma linha por tarefa do ClickUp; `responsavel_id` é o primeiro responsável, `NULL` quando ele não foi mapeado. `data_conclusao` fica `NULL` quando a tarefa é reaberta. `arquivada_em` guarda o timestamp em que a tarefa deixou de aparecer na busca (`CLICKUP_SPACE_ID` + listas de `CLICKUP_LIST_MAP`, `NULL` enquanto ativa); a linha nunca é apagada, e `unarchive_seen_tasks` limpa a coluna quando a tarefa volta a aparecer. `turma` vem de `CLICKUP_LIST_MAP` (ver [`design-decisions.md`](design-decisions.md#23)), nunca digitada por alguém. | `upsert_task` (arquivamento: `archive_missing_tasks`, `unarchive_seen_tasks`) |
+| `tarefas` | Uma linha por tarefa do ClickUp; `responsavel_id` é o primeiro responsável, `NULL` quando ele não foi mapeado. `data_conclusao` fica `NULL` quando a tarefa é reaberta. `arquivada_em` guarda o timestamp em que a tarefa deixou de aparecer na busca (`CLICKUP_SPACE_ID` + listas de `CLICKUP_LIST_MAP`, `NULL` enquanto ativa); a linha nunca é apagada, e `unarchive_seen_tasks` limpa a coluna quando a tarefa volta a aparecer. `turma` vem de `CLICKUP_LIST_MAP` (ver [`design-decisions.md`](design-decisions.md#23)), nunca digitada por alguém. `tarefa_pai_id` (`TEXT NULL`) guarda o pai imediato de uma subtarefa, sem chave estrangeira, e pode apontar para um id ausente de `tarefas` (ver [`design-decisions.md`](design-decisions.md#29)). | `upsert_task` (arquivamento: `archive_missing_tasks`, `unarchive_seen_tasks`) |
 | `detalhes_tarefa` | Descrição longa de uma tarefa. | `upsert_task_detail` |
 | `horas` | Um apontamento de horas do Clockify; `funcionario_id` é `NULL` quando o colaborador não foi mapeado. | `upsert_time_entry` |
 | `etiquetas` | Tags distintas atribuídas a tarefas. | `upsert_tag_and_link` |

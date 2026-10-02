@@ -23,11 +23,13 @@ from sop_pipeline.models.schemas import Priority, Task, TaskType
 COL_ID = 1
 COL_TITULO = 2
 COL_DATA_CONCLUSAO = 9
+COL_TIPO = 10
 COL_DIAS_RESTANTES = 13
 COL_ATRASADO = 14
 COL_STATUS_PRAZO = 15
 COL_TURMA = 16
 COL_ARQUIVADA_EM = 17
+COL_TAREFA_PAI_ID = 18
 FORMULA_COLS = [COL_DIAS_RESTANTES, COL_ATRASADO, COL_STATUS_PRAZO]
 
 
@@ -165,3 +167,29 @@ def test_save_tasks_clears_stale_data_conclusao(tasks_workbook_path: str) -> Non
     assert worksheet.cell(row=2, column=COL_DATA_CONCLUSAO).value is None
     for column in FORMULA_COLS:
         assert str(worksheet.cell(row=2, column=column).value).startswith("=")
+
+
+# --- subtasks ----------------------------------------------------------------------
+
+
+def test_save_tasks_writes_parent_id_of_a_subtask(tasks_workbook_path: str) -> None:
+    """A subtask's immediate parent id lands in tarefa_pai_id and tipo reads Subtask."""
+    subtask = _task("ABC-2", "Child").model_copy(
+        update={"parent_task_id": "ABC-1", "task_type": TaskType.SUBTASK}
+    )
+
+    ExcelWriter.save_tasks(tasks_workbook_path, [subtask])
+
+    worksheet = openpyxl.load_workbook(tasks_workbook_path)["BASE_TAREFAS"]
+    assert worksheet.cell(row=3, column=COL_ID).value == "ABC-2"
+    assert worksheet.cell(row=3, column=COL_TAREFA_PAI_ID).value == "ABC-1"
+    assert worksheet.cell(row=3, column=COL_TIPO).value == "Subtask"
+
+
+def test_save_tasks_leaves_parent_id_empty_for_a_regular_task(tasks_workbook_path: str) -> None:
+    """A task with no parent writes an empty tarefa_pai_id."""
+    ExcelWriter.save_tasks(tasks_workbook_path, [_task("ABC-2", "Top level")])
+
+    worksheet = openpyxl.load_workbook(tasks_workbook_path)["BASE_TAREFAS"]
+    assert worksheet.cell(row=3, column=COL_TAREFA_PAI_ID).value is None
+    assert worksheet.cell(row=3, column=COL_TIPO).value == "Task"

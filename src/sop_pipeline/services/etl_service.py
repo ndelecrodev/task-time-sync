@@ -10,7 +10,7 @@ from isodate import parse_duration
 from pydantic import ValidationError
 
 from sop_pipeline.config.settings import settings
-from sop_pipeline.models.schemas import Task, TaskDetail, TaskType, TimeEntry
+from sop_pipeline.models.schemas import Priority, Task, TaskDetail, TaskType, TimeEntry
 
 logger = getLogger(__name__)
 
@@ -20,7 +20,8 @@ UNKNOWN_EMAIL = "email_desconhecido@desconhecido.com"
 
 # ClickUp's `priority.priority` labels, mapped onto the Priority enum's exact
 # label strings. Chosen 1:1 by severity: urgent is the most severe level ClickUp
-# offers, so it maps to Highest rather than High.
+# offers, so it maps to Highest rather than High. A task with no priority set
+# never reaches this map; it becomes Priority.NO_PRIORITY in _build_task.
 CLICKUP_PRIORITY_MAP = {
     "urgent": "Highest",
     "high": "High",
@@ -137,10 +138,10 @@ class EtlService:
         """Convert raw ClickUp tasks into :class:`Task` models.
 
         A task that cannot be converted is discarded and reported at ERROR
-        level, since a discarded task silently disappears from the report. The
-        most common cause is a null or unrecognised priority — ClickUp's four
-        priority levels (urgent/high/normal/low) all map onto :class:`Priority`,
-        but a task with no priority set has nothing to map.
+        level, since a discarded task silently disappears from the report. A
+        task with no priority set is kept as ``Priority.NO_PRIORITY``; a
+        non-null priority label missing from ``CLICKUP_PRIORITY_MAP`` still
+        fails validation and is discarded here.
 
         Args:
             raw_tasks: Task dicts as returned by ``ClickUpClient.fetch_tasks``.
@@ -211,8 +212,20 @@ class EtlService:
             if teams_email:
                 assignee_email = teams_email
 
+        # A null or absent priority means "no priority set" in ClickUp and is
+        # kept. An unknown non-null label maps to None and fails validation, so
+        # a new ClickUp priority level is noticed instead of silently relabelled.
         priority_label = (raw_task.get("priority") or {}).get("priority")
-        priority = CLICKUP_PRIORITY_MAP.get(priority_label) if priority_label else None
+        if priority_label is None:
+            priority = Priority.NO_PRIORITY
+        else:
+            priority = CLICKUP_PRIORITY_MAP.get(priority_label)
+
+        # "parent" is the immediate parent's id, so a nested subtask points at
+        # the subtask above it rather than at the top-level task. It is stored
+        # as is, with no check that the parent is in this run (see
+        # design-decisions.md).
+        parent_task_id = raw_task.get("parent")
 
         # No sentinel needed for area or turma: pipeline._filter_allowed_lists
         # already discards every task whose list is not in CLICKUP_LIST_MAP
@@ -246,13 +259,14 @@ class EtlService:
             creation_date=self._parse_millis_to_date(raw_task["date_created"]),
             due_date=self._parse_millis_to_date(raw_task.get("due_date")),
             completion_date=completion_date,
-            task_type=TaskType.TASK,
+            task_type=TaskType.SUBTASK if parent_task_id else TaskType.TASK,
             creator=(raw_task.get("creator") or {}).get("username"),
             update_date=self._parse_millis_to_date(raw_task.get("date_updated")),
             assignee_email=assignee_email,
             tags=[tag.get("name") for tag in raw_task.get("tags", [])],
             turma=list_info.turma,
             assignee_names=canonical_names,
+            parent_task_id=parent_task_id,
         )
 
     @staticmethod
