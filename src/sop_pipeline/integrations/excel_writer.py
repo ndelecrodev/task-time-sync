@@ -43,6 +43,7 @@ TASK_COLUMN_MAP = {
     "criador": "creator",
     "data_atualizacao": "update_date",
     "turma": "turma",
+    "tarefa_pai_id": "parent_task_id",
 }
 
 # Columns owned by Excel formulas, not by Python. Kept out of TASK_COLUMN_MAP on
