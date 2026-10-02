@@ -6,13 +6,13 @@ from sop_pipeline.integrations.notifier import Notifier
 from sop_pipeline.models.schemas import Priority, Task, TaskType
 
 
-def _make_task(due_date: date | None) -> Task:
+def _make_task(due_date: date | None, priority: Priority = Priority.HIGH) -> Task:
     return Task(
         task_id="QT-TEST",
         title="Tarefa de teste",
         assignee="Nicolas Delecrode",
         assignee_email="nicolas@example.com",
-        priority=Priority.HIGH,
+        priority=priority,
         status="Fazendo",
         area="TI",
         creation_date=date.today() - timedelta(days=10),
@@ -53,3 +53,11 @@ def test_build_message_task_without_due_date_shows_indefinido():
 
     assert "Dias restantes:" in message
     assert "Indefinido" in message
+
+
+def test_build_message_task_without_priority_shows_sem_prioridade():
+    task = _make_task(due_date=date.today() + timedelta(days=2), priority=Priority.NO_PRIORITY)
+
+    message = Notifier._build_message(task)
+
+    assert "<b>Prioridade:</b> Sem prioridade<br>" in message
