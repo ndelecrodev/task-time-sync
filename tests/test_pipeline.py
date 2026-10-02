@@ -89,13 +89,13 @@ def test_sync_clickup_archive_set_includes_in_scope_task_that_failed_validation(
 ) -> None:
     """An in-scope task discarded by validation is still in the archive set.
 
-    The null-priority task is still active in ClickUp; only our own parsing
+    The unknown-priority task is still active in ClickUp; only our own parsing
     rejected it, so it must not be archived as if it had disappeared. A task
     from a list outside CLICKUP_LIST_MAP is out of scope and must not be in it.
     """
     tasks = [
         make_clickup_task(task_id="ABC-1"),
-        make_clickup_task(task_id="ABC-2", priority=None),
+        make_clickup_task(task_id="ABC-2", priority={"priority": "critical"}),
         make_clickup_task(task_id="ABC-3", list={"id": UNMAPPED_LIST_ID, "name": "Outra"}),
     ]
     postgres_client = MagicMock()
@@ -114,7 +114,7 @@ def test_sync_clickup_archive_set_includes_in_scope_task_that_failed_validation(
 def test_sync_clickup_unarchives_reappearing_task_that_failed_validation(
     etl_service, make_clickup_task, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """An archived task back with priority null is unarchived but never upserted.
+    """An archived task back with an unknown priority is unarchived but never upserted.
 
     Unarchiving uses the same set as archiving (every in-scope raw id, before
     validation), so a task ClickUp still returns is not left archived just
@@ -122,7 +122,7 @@ def test_sync_clickup_unarchives_reappearing_task_that_failed_validation(
     """
     tasks = [
         make_clickup_task(task_id="ABC-1"),
-        make_clickup_task(task_id="ABC-2", priority=None),
+        make_clickup_task(task_id="ABC-2", priority={"priority": "critical"}),
     ]
     postgres_client = MagicMock()
     postgres_client.unarchive_seen_tasks.return_value = 1
@@ -248,7 +248,7 @@ def test_sync_clickup_discarded_task_gets_no_links(etl_service, make_clickup_tas
     """A task rejected by validation is neither upserted nor linked."""
     tasks = [
         make_clickup_task(task_id="ABC-1"),
-        make_clickup_task(task_id="ABC-2", priority=None),
+        make_clickup_task(task_id="ABC-2", priority={"priority": "critical"}),
     ]
 
     postgres_client = _run_sync_with(etl_service, tasks)
@@ -262,13 +262,13 @@ def test_sync_clickup_does_not_write_detail_for_discarded_task(
 ) -> None:
     """A detail is never written for a task_id absent from the final tasks list.
 
-    The null-priority task is discarded by transform_tasks but would still get a
+    The unknown-priority task is discarded by transform_tasks but would still get a
     detail from transform_details; the pipeline's valid_ids filter must drop it
     before both the Excel write and the Postgres upsert.
     """
     tasks = [
         make_clickup_task(task_id="ABC-1"),
-        make_clickup_task(task_id="ABC-2", priority=None),
+        make_clickup_task(task_id="ABC-2", priority={"priority": "critical"}),
     ]
     postgres_client = MagicMock()
 
@@ -289,6 +289,22 @@ def test_sync_clickup_does_not_write_detail_for_discarded_task(
     ]
     assert upserted_detail_ids == ["ABC-1"]
     assert "ABC-2" not in upserted_detail_ids
+
+
+def test_sync_clickup_saves_subtask_whose_parent_is_not_in_the_run(
+    etl_service, make_clickup_task
+) -> None:
+    """A subtask pointing at a task absent from this run is still upserted with its parent id."""
+    task = make_clickup_task(task_id="ABC-2", parent="NOT-FETCHED")
+
+    postgres_client = _run_sync_with(etl_service, [task])
+
+    upserted = postgres_client.upsert_task.call_args.kwargs["task"]
+    assert upserted.task_id == "ABC-2"
+    assert upserted.parent_task_id == "NOT-FETCHED"
+    postgres_client.upsert_task_detail.assert_called_once_with(
+        task_id="ABC-2", descricao="Full description"
+    )
 
 
 def test_sync_clickup_one_failing_upsert_does_not_stop_the_rest(

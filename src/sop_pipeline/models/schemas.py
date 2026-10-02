@@ -12,13 +12,19 @@ from pydantic import BaseModel, EmailStr, Field, computed_field
 
 
 class Priority(str, Enum):
-    """Jira issue priority, using the exact labels returned by the Jira API."""
+    """Task priority, using the Jira-era labels ClickUp priorities map onto.
+
+    ``NO_PRIORITY`` is what a ClickUp task with no priority set gets. Its value
+    is Portuguese because it is data: it is written to the spreadsheet, to
+    Postgres and to the Teams alert as is.
+    """
 
     HIGHEST = "Highest"
     HIGH = "High"
     MEDIUM = "Medium"
     LOW = "Low"
     LOWEST = "Lowest"
+    NO_PRIORITY = "Sem prioridade"
 
 
 class DeadlineStatus(Enum):
@@ -69,6 +75,9 @@ class Task(BaseModel):
         assignee_names: Canonical name of each assignee, in source order,
             normalized individually; ``assignee`` is these joined with ", ".
         turma: The turma the task belongs to, resolved from its ClickUp list.
+        parent_task_id: ClickUp id of the immediate parent task when this task
+            is a subtask, ``None`` otherwise. The parent is not guaranteed to
+            be in the same run or to have passed validation.
     """
 
     task_id: str
@@ -87,6 +96,7 @@ class Task(BaseModel):
     tags: list[str] = Field(default_factory=list)
     turma: str
     assignee_names: list[str] = Field(default_factory=list)
+    parent_task_id: str | None = None
 
     @computed_field
     @property
