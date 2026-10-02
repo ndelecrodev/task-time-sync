@@ -606,6 +606,9 @@ side effect on the other.
 
 ## 27. Alerts stop when the ClickUp status type is "done" or "closed"; data completion stays tied to `date_closed`
 
+**Superseded by decision 28.** `Task.status_is_done` was removed and data
+completion now follows the status type. The text below is kept as history.
+
 Every ClickUp status has a `type` (`open`, `unstarted`, `custom`, `done` or
 `closed`) on top of the free-text name that goes into `Task.status`
 (decision 11). `EtlService._build_task` sets `Task.status_is_done` to `True`
@@ -638,3 +641,53 @@ status past its due date shows "Atrasado" in the spreadsheet and the
 dashboard, because `data_conclusao` stays empty until the task is closed, yet
 it no longer alerts on Teams. Anyone comparing both sides will find late
 tasks with no alert, and that behavior is expected.
+
+## 28. Completion follows the current ClickUp status type, and a task can have several assignees in `tarefa_responsavel`
+
+`EtlService._build_task` sets `completion_date` to `date_closed`, or to
+`date_done` when `date_closed` is empty, only if the current status type is in
+`FINISHED_STATUS_TYPES` (`done` or `closed`). For any other type, or for a
+status with no type, `completion_date` is `None`, even if ClickUp still sends
+an old date. Reopening a task clears its completion: `upsert_task` writes
+`NULL` to `tarefas.data_conclusao`, and `save_tasks` empties the
+`data_conclusao` cell in `BASE_TAREFAS`. This entry supersedes decision 27,
+and `Task.status_is_done` was removed: `completion_date` is now the only source
+of "completed", including for alerts.
+
+Each task also carries `Task.assignee_names`, the assignees' canonical names in
+ClickUp order. `sync_clickup` resolves each name against `funcionarios` and
+calls `PostgresClient.sync_task_assignees`, which keeps one row in
+`tarefa_responsavel (task_id, funcionario_id)` per registered assignee and
+deletes the rows of people no longer assigned. `tarefas.responsavel_id` stays
+the first assignee, the same person `assignee_email` targets in the Teams
+@mention. Names that resolve to the "Unmapped employee" sentinel get no row.
+
+**Why completion changed:** only the `closed` type fills `date_closed`. Every
+list in `CLICKUP_LIST_MAP` has `done` (type `done`) before `Closed`, and tasks
+in `done` showed as open in the spreadsheet, the dashboard and the alerts,
+with "Atrasado" once their due date had passed. In the other direction,
+`_write_task_row` passed `value=None` to `worksheet.cell`, and openpyxl
+ignores that argument when it is `None`, so a reopened task kept its old
+`data_conclusao` in the spreadsheet. `date_done` covers the `done` type, and
+reading the current type handles reopening. Decision 27 had split "completed
+for alerts" from "completed for data"; two sources for the same question
+invited them to diverge.
+
+**Why an N:N table:** `responsavel_id` was resolved with
+`name_to_id.get(task.assignee)`, and `assignee` is the joined string
+("A, B"), which never matches a canonical name. Every task with more than one
+assignee ended up with a `NULL` `responsavel_id`, and the dashboard, which
+builds its task tables from that column, stopped showing them. Fixing
+`responsavel_id` covers the first assignee; `tarefa_responsavel` gives the
+dashboard everyone else. Deleting a row from this table does not conflict
+with decision 18, which is about tasks: the table is derived and mirrors the
+current assignees. `tarefa_etiqueta` follows a different rule, it only adds
+links and never removes a tag that left the task.
+
+**Trade-off:** the spreadsheet did not get a matching table.
+`BASE_TAREFAS[responsavel]` keeps the joined string, and the per-person counts
+in `CALCULOS` use a "contains" match. This is a deliberate departure from
+one-to-one parity between Excel and Postgres tables, made to leave the
+spreadsheet structure unchanged. The known risk: if one person's name is
+contained in another's (for example "Ana Paula" and "Ana Paula Souza"), the
+match counts the task for both.
