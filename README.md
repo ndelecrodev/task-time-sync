@@ -139,7 +139,7 @@ comentário explicando onde obter o valor. Resumo:
 
 | Grupo | Variáveis |
 |---|---|
-| ClickUp | `CLICKUP_API_TOKEN`, `CLICKUP_TEAM_ID`, `CLICKUP_SPACE_ID`, `CLICKUP_FOLDER_IDS` |
+| ClickUp | `CLICKUP_API_TOKEN`, `CLICKUP_TEAM_ID`, `CLICKUP_SPACE_ID` |
 | Clockify | `API_KEY_CLOCKIFY`, `WORKSPACE_ID`, `WORKSPACE_NAME` |
 | Postgres / Supabase | `DATABASE_URL`, `DEFAULT_ANONYMOUS_EMAIL` |
 | Regras de alerta | `ALERT_DAYS_LOW`, `ALERT_DAYS_MEDIUM`, `ALERT_DAYS_HIGH`, `HIGH_PRIORITIES`, `LOW_PRIORITIES` |
@@ -170,7 +170,7 @@ e deve apontar para o **transaction pooler** do Supabase (porta `6543`), não pa
 a conexão direta: o pooler suporta IPv4, enquanto a conexão direta do Supabase só
 responde em IPv6, o que quebra em redes e provedores sem suporte a IPv6.
 
-### Os identificadores do ClickUp (`CLICKUP_TEAM_ID`, `CLICKUP_SPACE_ID`, `CLICKUP_FOLDER_IDS`)
+### Os identificadores do ClickUp (`CLICKUP_TEAM_ID`, `CLICKUP_SPACE_ID`)
 
 `CLICKUP_SPACE_ID` define **de qual Space do ClickUp o pipeline busca tarefas**:
 o `ClickUpClient` chama `GET /team/{team_id}/task` com `space_ids[]=<CLICKUP_SPACE_ID>`
@@ -179,14 +179,13 @@ tarefas concluídas continuem aparecendo na contagem de concluídas) e
 `subtasks=true` (para que subtarefas voltem como tarefas próprias, do mesmo
 jeito que uma issue do tipo Sub-task do Jira aparecia na mesma busca).
 
-Esse fetch traz toda tarefa do Space, de qualquer pasta. `CLICKUP_FOLDER_IDS`
-é uma allowlist explícita e obrigatória — uma lista de IDs de pasta ("turma"),
-separados por vírgula — que `pipeline._filter_allowed_folders` usa para
-descartar qualquer tarefa cuja pasta não esteja na lista, antes mesmo de
-`EtlService` vê-la. É deliberadamente uma allowlist, não "toda pasta do Space
-automaticamente": uma pasta sem relação com "turma" pode ser adicionada ao
-Space depois, e não deve começar a alimentar o pipeline, os alertas e os
-relatórios só por existir lá (ver [`design-decisions.md`](docs/design-decisions.md#23)).
+Esse fetch traz toda tarefa do Space, de qualquer pasta. O escopo não é
+configurado em `.env`: `pipeline._filter_allowed_lists` descarta qualquer
+tarefa cuja lista não seja chave de `CLICKUP_LIST_MAP`, uma constante em
+`src/sop_pipeline/services/etl_service.py` que também define a área e a turma
+de cada lista. As tarefas descartadas são registradas em nível WARNING. Uma
+lista nova só entra no pipeline depois de ganhar uma entrada nesse mapeamento
+(ver [`design-decisions.md`](docs/design-decisions.md#23)).
 
 `CLICKUP_TEAM_ID` identifica o Team (Workspace) do ClickUp.
 

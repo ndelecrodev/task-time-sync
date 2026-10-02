@@ -32,8 +32,8 @@ de sincronização isoladas entre si.
                                número de página, GET /team/{team_id}/task
         │  list[dict] cru (toda tarefa do Space, de qualquer pasta)
         ▼
-    pipeline._filter_allowed_folders
-        │  descarta tarefas cuja folder.id não está em CLICKUP_FOLDER_IDS
+    pipeline._filter_allowed_lists
+        │  descarta (com WARNING) tarefas cuja list.id não está em CLICKUP_LIST_MAP
         ▼
     EtlService.transform_tasks    ─▶ list[Task]
     EtlService.transform_details  ─▶ list[TaskDetail]
