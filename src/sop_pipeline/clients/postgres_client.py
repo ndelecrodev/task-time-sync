@@ -79,6 +79,11 @@ class Tarefas(Base):
     data_atualizacao = Column(Date, nullable=False)
     arquivada_em = Column(DateTime(timezone=True), nullable=True)
     turma = Column(String, nullable=False)
+    # No ForeignKey on purpose: the parent may have been discarded by
+    # validation or be out of scope, and ClickUp does not return parents
+    # before children, so a FK would reject subtasks the same way
+    # detalhes_tarefa rejected details of unsaved tasks.
+    tarefa_pai_id = Column(String, nullable=True)
 
 
 class DetalhesTarefa(Base):
@@ -261,6 +266,7 @@ class PostgresClient:
                         criador=task.creator,
                         data_atualizacao=task.update_date,
                         turma=task.turma,
+                        tarefa_pai_id=task.parent_task_id,
                     )
                 )
             else:
@@ -277,6 +283,7 @@ class PostgresClient:
                 result.criador = task.creator
                 result.data_atualizacao = task.update_date
                 result.turma = task.turma
+                result.tarefa_pai_id = task.parent_task_id
 
             session.commit()
 

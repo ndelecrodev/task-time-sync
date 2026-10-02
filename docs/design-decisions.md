@@ -480,12 +480,16 @@ os demais aparecem no relatório (na coluna `responsavel` da planilha e em
 workspace usa a funcionalidade paga de Custom Task Types do ClickUp, o que
 não é o caso deste workspace. Como `Task.task_type` é campo obrigatório e o
 `Task` não podia mudar, toda tarefa vinda do ClickUp recebe `TaskType.TASK`
-fixo, decisão do dono do projeto. Isso significa que o relatório perde a
+fixo, decisão do dono do projeto. (**Substituído em parte pela decisão 29:**
+uma tarefa com `parent` preenchido passou a receber `TaskType.SUBTASK`. O
+texto deste parágrafo fica como histórico.) Isso significa que o relatório perde a
 distinção Bug/Story/Epic/Subtask que existia com o Jira; se o workspace algum
 dia adotar Custom Task Types, `_build_task` precisará ser revisitado para
 mapear `custom_item_id` em vez de usar o valor fixo.
 
-**Trade-off da prioridade nula:** o ClickUp representa "sem prioridade" como
+**Trade-off da prioridade nula (substituído pela decisão 29, que passou a
+gravar a tarefa como "Sem prioridade" em vez de descartá-la; o texto abaixo
+fica como histórico):** o ClickUp representa "sem prioridade" como
 `priority: null` no payload (em vez do objeto Jira com `name` ausente). O
 mapeamento (`urgent`→Highest, `high`→High, `normal`→Medium, `low`→Low) só se
 aplica quando `priority` não é nulo; quando é nulo, `Task.priority` fica sem
@@ -728,3 +732,48 @@ propósito da paridade de uma tabela do Excel para cada tabela do Postgres, para
 não mudar a estrutura da planilha. O risco conhecido: se o nome de alguém
 estiver contido no nome de outra pessoa (por exemplo "Ana Paula" e "Ana Paula
 Souza"), a busca conta a tarefa para as duas.
+
+## 29. Subtarefas guardam o pai imediato em `tarefa_pai_id`, sem chave estrangeira, e prioridade nula vira "Sem prioridade"
+
+`ClickUpClient` já pedia `subtasks=true`, e o ClickUp devolve cada subtarefa
+como uma linha própria, com `parent` apontando para o id da tarefa logo acima
+dela. `EtlService._build_task` passou a ler esse campo: `Task.parent_task_id`
+recebe o id do pai, e `Task.task_type` vira `TaskType.SUBTASK` quando há pai e
+`TaskType.TASK` quando não há. Uma subtarefa de subtarefa guarda o pai
+imediato, não a tarefa do topo. O id vai para `tarefas.tarefa_pai_id`
+(`TEXT NULL`) no Postgres e para a coluna `tarefa_pai_id` de `BASE_TAREFAS`,
+depois de `turma`. Para subtarefas, isso substitui o `TaskType.TASK` fixo da
+decisão 22.
+
+As métricas não mudam: uma subtarefa entra no total e nas concluídas de
+`HISTORICO_PROGRESSO` e nas contagens de `CALCULOS` como qualquer tarefa, e
+dispara alerta pelas mesmas regras.
+
+**Por quê sem chave estrangeira:** o pai pode ter sido descartado pela
+validação (decisão 8) ou estar numa lista fora de `CLICKUP_LIST_MAP`, e o
+ClickUp não garante que o pai venha antes dos filhos na paginação. Com uma FK,
+a subtarefa seria rejeitada no insert do mesmo jeito que `detalhes_tarefa`
+rejeitava detalhes de tarefas que nunca tinham sido gravadas, o problema que o
+filtro `valid_ids` de `sync_clickup` corrige. Sem a FK, `tarefa_pai_id` pode
+apontar para um id ausente de `tarefas`, e quem consulta usa `LEFT JOIN` e
+trata o pai ausente.
+
+**Prioridade nula:** `Priority` ganhou o membro `NO_PRIORITY`, com o valor
+`"Sem prioridade"` em português por ser dado (decisão 6). Uma tarefa com
+`priority: null`, ou sem a chave, recebe esse valor em vez de falhar na
+validação. `AlertService._alert_window` dá a ela a janela de `Medium`
+(`ALERT_DAYS_MEDIUM`), e o alerta do Teams mostra "Sem prioridade". Um rótulo
+não nulo ausente de `CLICKUP_PRIORITY_MAP` continua descartado pelo caminho
+normal da decisão 8, para que um nível novo de prioridade do ClickUp apareça
+no log em vez de virar "Sem prioridade" sem ninguém notar. Isso substitui o
+trade-off da prioridade nula da decisão 22.
+
+**Por quê:** no levantamento feito antes da mudança, 103 das 181 tarefas no
+escopo tinham prioridade nula e eram descartadas, e 68 delas eram subtarefas.
+Mais da metade do escopo não chegava à planilha nem ao Postgres.
+
+**Trade-off:** "Sem prioridade" é um valor novo na coluna `prioridade` da
+planilha e do Postgres. Fórmulas, filtros ou consultas que listam as cinco
+prioridades de forma explícita deixam essas tarefas de fora até serem
+atualizados. `HIGH_PRIORITIES` e `LOW_PRIORITIES` em `settings` não incluem o
+valor; a janela vem do mesmo ramo de `Medium` em `_alert_window`.

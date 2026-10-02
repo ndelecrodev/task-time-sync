@@ -64,19 +64,20 @@ A normalized ClickUp task. Upsert key: `task_id` (ClickUp's `id`).
 | `task_id` | `str` | `id` |
 | `title` | `str` | `name` (default `"No title"`) |
 | `assignee` | `str` | `assignees[*].username`/`.email`, each normalized individually and joined with `", "` |
-| `priority` | `Priority` | `priority.priority` (`urgent`/`high`/`normal`/`low`), mapped onto the enum |
+| `priority` | `Priority` | `priority.priority` (`urgent`/`high`/`normal`/`low`), mapped onto the enum; a null or absent `priority` becomes `Sem prioridade`. See [`design-decisions.md`](design-decisions.md#29) |
 | `status` | `str` | `status.status` |
 | `area` | `str \| None` | `list.id` resolved against the fixed `CLICKUP_LIST_MAP` mapping (`area` field) |
 | `creation_date` | `date` | `date_created` (millisecond timestamp) |
 | `due_date` | `date \| None` | `due_date` (millisecond timestamp) |
 | `completion_date` | `date \| None` | `date_closed`, falling back to `date_done` (millisecond timestamp), only when `status.type` is `done` or `closed`; otherwise `None`. See [`design-decisions.md`](design-decisions.md#28) |
-| `task_type` | `TaskType` | fixed to `TaskType.TASK` — see [`design-decisions.md`](design-decisions.md#22) |
+| `task_type` | `TaskType` | `TaskType.SUBTASK` when `parent` is set, otherwise `TaskType.TASK`. See [`design-decisions.md`](design-decisions.md#29) |
 | `creator` | `str \| None` | `creator.username` |
 | `update_date` | `date \| None` | `date_updated` (millisecond timestamp) |
 | `assignee_email` | `EmailStr \| None` | `EmployeeRegistry.get_teams_email` when set; otherwise `assignees[0].email`, falling back to `EmployeeRegistry.get_registered_email` |
 | `tags` | `list[str]` | `tags[*].name` |
 | `turma` | `str` | `list.id` resolved against the fixed `CLICKUP_LIST_MAP` mapping (`turma` field); `folder.name` is not used, see [`design-decisions.md`](design-decisions.md#23) |
 | `assignee_names` | `list[str]` | each assignee's canonical name, in ClickUp order; not written to Excel, feeds `tarefa_responsavel` |
+| `parent_task_id` | `str \| None` | `parent`, the id of a subtask's immediate parent; `None` for a task with no parent. The parent may not be in the same run. See [`design-decisions.md`](design-decisions.md#29) |
 
 **Multiple assignees:** unlike Jira, ClickUp allows more than one assignee per
 task. Each is normalized individually by `normalize_employee_identifier` (by
@@ -153,11 +154,11 @@ The long description of a task, separated because it's a large text and goes in 
 
 | Enum | Values |
 |---|---|
-| `Priority` | `Highest`, `High`, `Medium`, `Low`, `Lowest` |
+| `Priority` | `Highest`, `High`, `Medium`, `Low`, `Lowest`, `Sem prioridade` |
 | `TaskType` | `Bug`, `Task`, `Story`, `Epic`, `Subtask` |
 | `DeadlineStatus` | `Concluído`, `Atrasado`, `Atenção`, `No prazo`, `Sem prazo` |
 
-`Priority`'s values are Jira's historical labels; the ETL maps ClickUp's four priority levels (`urgent`/`high`/`normal`/`low`) onto them — see [`design-decisions.md`](design-decisions.md#22). `TaskType` is fixed to `Task` for every ClickUp-sourced task, for the same reason. Those of `DeadlineStatus` are exactly the strings the `status_prazo` column formula produces in Excel. **None of these values can be translated** — only the enum member names.
+`Priority`'s values are Jira's historical labels; the ETL maps ClickUp's four priority levels (`urgent`/`high`/`normal`/`low`) onto them (see [`design-decisions.md`](design-decisions.md#22)), and a task with no priority gets `Sem prioridade`, which alerts with the `Medium` window (see [`design-decisions.md`](design-decisions.md#29)). A ClickUp-sourced task gets `TaskType` `Subtask` when it has a parent and `Task` when it does not. Those of `DeadlineStatus` are exactly the strings the `status_prazo` column formula produces in Excel. **None of these values can be translated** — only the enum member names.
 
 ---
 
@@ -169,7 +170,7 @@ Conventions for the `.xlsx` file: tab name in UPPERCASE, table name in lowercase
 
 | Tab | Table | Columns | Written by |
 |---|---|---|---|
-| `BASE_TAREFAS` | `base_tarefas` | id, titulo, responsavel, area, prioridade, status, data_criacao, prazo, data_conclusao, **dias_restantes**, **atrasado**, **status_prazo**, tipo, criador, data_atualizacao, arquivada_em, turma | `save_tasks` |
+| `BASE_TAREFAS` | `base_tarefas` | id, titulo, responsavel, area, prioridade, status, data_criacao, prazo, data_conclusao, **dias_restantes**, **atrasado**, **status_prazo**, tipo, criador, data_atualizacao, arquivada_em, turma, tarefa_pai_id | `save_tasks` |
 | `DETALHES_TAREFA` | `detalhes_tarefa` | id, descricao | `save_details` |
 | `BASE_HORAS` | `base_horas` | id, funcionario, data, horas | `save_hours` |
 | `DIM_ETIQUETAS` | `dim_etiquetas` | id_etiqueta, nome_etiqueta | `save_tags` |
@@ -244,7 +245,7 @@ the corresponding `.xlsx` tab.
 | Table | Role | Upserted by |
 |---|---|---|
 | `funcionarios` | Employee identity, synced from `DIM_FUNCIONARIO`. Includes `photo_url`, the photo URL consumed by the dashboard, and `teams_email`, which overrides `clickup_email` specifically for Teams @mentions when the two diverge (see [`design-decisions.md`](design-decisions.md#26)). | `upsert_employee` |
-| `tarefas` | One row per ClickUp task; `responsavel_id` is the first assignee, `NULL` when they could not be mapped. `data_conclusao` goes back to `NULL` when the task is reopened. `arquivada_em` holds the timestamp when the task stopped appearing in the fetch (`CLICKUP_SPACE_ID` + the lists in `CLICKUP_LIST_MAP`, `NULL` while active); the row is never deleted, and `unarchive_seen_tasks` clears the column when the task shows up again. `turma` comes from `CLICKUP_LIST_MAP` (see [`design-decisions.md`](design-decisions.md#23)), never user-entered. | `upsert_task` (archiving: `archive_missing_tasks`, `unarchive_seen_tasks`) |
+| `tarefas` | One row per ClickUp task; `responsavel_id` is the first assignee, `NULL` when they could not be mapped. `data_conclusao` goes back to `NULL` when the task is reopened. `arquivada_em` holds the timestamp when the task stopped appearing in the fetch (`CLICKUP_SPACE_ID` + the lists in `CLICKUP_LIST_MAP`, `NULL` while active); the row is never deleted, and `unarchive_seen_tasks` clears the column when the task shows up again. `turma` comes from `CLICKUP_LIST_MAP` (see [`design-decisions.md`](design-decisions.md#23)), never user-entered. `tarefa_pai_id` (`TEXT NULL`) holds a subtask's immediate parent, with no foreign key, and can point at an id missing from `tarefas` (see [`design-decisions.md`](design-decisions.md#29)). | `upsert_task` (archiving: `archive_missing_tasks`, `unarchive_seen_tasks`) |
 | `detalhes_tarefa` | Long-form task description. | `upsert_task_detail` |
 | `horas` | One Clockify time entry; `funcionario_id` is `NULL` when the employee could not be mapped. | `upsert_time_entry` |
 | `etiquetas` | Distinct tags assigned to tasks. | `upsert_tag_and_link` |

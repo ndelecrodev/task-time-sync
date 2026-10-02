@@ -63,6 +63,7 @@ class AlertService:
             return settings.ALERT_DAYS_HIGH
         if priority in settings.LOW_PRIORITIES:
             return settings.ALERT_DAYS_LOW
-        if priority == Priority.MEDIUM.value:
+        # A task with no priority set alerts like a Medium one.
+        if priority in (Priority.MEDIUM.value, Priority.NO_PRIORITY.value):
             return settings.ALERT_DAYS_MEDIUM
         return None

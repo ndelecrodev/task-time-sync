@@ -448,12 +448,16 @@ get a direct @mention.
 workspace uses ClickUp's paid Custom Task Types feature, which this
 workspace does not. Since `Task.task_type` is a required field and `Task`
 couldn't change, every task from ClickUp gets a fixed `TaskType.TASK`, a
-call made by the project owner. This means the report loses the
+call made by the project owner. (**Partly superseded by decision 29:** a task
+with `parent` set now gets `TaskType.SUBTASK`. This paragraph is kept as
+history.) This means the report loses the
 Bug/Story/Epic/Subtask distinction Jira used to provide; if the workspace
 ever adopts Custom Task Types, `_build_task` will need revisiting to map
 `custom_item_id` instead of using the fixed value.
 
-**The null-priority trade-off:** ClickUp represents "no priority" as
+**The null-priority trade-off (superseded by decision 29, which stores the
+task as "Sem prioridade" instead of discarding it; the text below is kept as
+history):** ClickUp represents "no priority" as
 `priority: null` in the payload (instead of Jira's object with an absent
 `name`). The mapping (`urgent`→Highest, `high`→High, `normal`→Medium,
 `low`→Low) only applies when `priority` isn't null; when it is,
@@ -691,3 +695,48 @@ one-to-one parity between Excel and Postgres tables, made to leave the
 spreadsheet structure unchanged. The known risk: if one person's name is
 contained in another's (for example "Ana Paula" and "Ana Paula Souza"), the
 match counts the task for both.
+
+## 29. Subtasks store their immediate parent in `tarefa_pai_id`, with no foreign key, and a null priority becomes "Sem prioridade"
+
+`ClickUpClient` already requested `subtasks=true`, and ClickUp returns each
+subtask as its own row, with `parent` holding the id of the task directly
+above it. `EtlService._build_task` now reads that field: `Task.parent_task_id`
+gets the parent's id, and `Task.task_type` is `TaskType.SUBTASK` when there is
+a parent and `TaskType.TASK` when there is none. A subtask of a subtask stores
+its immediate parent, not the top-level task. The id goes to
+`tarefas.tarefa_pai_id` (`TEXT NULL`) in Postgres and to the `tarefa_pai_id`
+column of `BASE_TAREFAS`, after `turma`. For subtasks, this supersedes the
+fixed `TaskType.TASK` of decision 22.
+
+Metrics do not change: a subtask counts toward the total and the completed
+count in `HISTORICO_PROGRESSO` and toward the `CALCULOS` counts like any task,
+and alerts under the same rules.
+
+**Why no foreign key:** the parent may have been discarded by validation
+(decision 8) or sit in a list outside `CLICKUP_LIST_MAP`, and ClickUp does not
+guarantee that a parent comes before its children in the pagination. With a
+FK, the subtask would be rejected on insert the same way `detalhes_tarefa`
+rejected details of tasks that were never saved, the problem the `valid_ids`
+filter in `sync_clickup` fixes. Without the FK, `tarefa_pai_id` can point at an
+id missing from `tarefas`, and queries use a `LEFT JOIN` and handle the
+missing parent.
+
+**Null priority:** `Priority` gained the `NO_PRIORITY` member, whose value
+`"Sem prioridade"` is Portuguese because it is data (decision 6). A task with
+`priority: null`, or with no such key, gets that value instead of failing
+validation. `AlertService._alert_window` gives it the `Medium` window
+(`ALERT_DAYS_MEDIUM`), and the Teams alert shows "Sem prioridade". A non-null
+label missing from `CLICKUP_PRIORITY_MAP` is still discarded through the
+normal path of decision 8, so a new ClickUp priority level shows up in the log
+instead of quietly becoming "Sem prioridade". This supersedes the null-priority
+trade-off of decision 22.
+
+**Why:** in the survey done before the change, 103 of the 181 in-scope tasks
+had a null priority and were discarded, and 68 of them were subtasks. More
+than half of the scope never reached the spreadsheet or Postgres.
+
+**Trade-off:** "Sem prioridade" is a new value in the `prioridade` column of
+the spreadsheet and of Postgres. Formulas, filters or queries that list the
+five priorities explicitly leave these tasks out until they are updated.
+`HIGH_PRIORITIES` and `LOW_PRIORITIES` in `settings` do not include the value;
+the window comes from the same `Medium` branch of `_alert_window`.
