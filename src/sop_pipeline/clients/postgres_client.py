@@ -15,6 +15,7 @@ from sqlalchemy import (
     Numeric,
     Sequence,
     String,
+    delete,
     select,
     update,
     func,
@@ -126,6 +127,19 @@ class TarefaEtiqueta(Base):
     etiqueta_id = Column(
         Integer, ForeignKey("etiquetas.id", name="fk_tarefa_etiqueta_etiqueta"), primary_key=True
     )
+
+
+class TarefaResponsavel(Base):
+    """A task-assignee association, mirrors the ``tarefa_responsavel`` table.
+
+    ``tarefas.responsavel_id`` keeps only the first assignee; this table holds
+    every assignee that resolves to a registered employee.
+    """
+
+    __tablename__ = "tarefa_responsavel"
+
+    task_id = Column(String, ForeignKey("tarefas.task_id"), primary_key=True)
+    funcionario_id = Column(Integer, ForeignKey("funcionarios.id"), primary_key=True)
 
 
 class Area(Base):
@@ -338,6 +352,42 @@ class PostgresClient:
 
             if link is None:
                 session.add(TarefaEtiqueta(task_id=task_id, etiqueta_id=tag.id))
+
+            session.commit()
+
+    def sync_task_assignees(self, task_id: str, funcionario_ids: list[int]) -> None:
+        """Make a task's tarefa_responsavel rows match its current assignees.
+
+        Missing links are added and links to people no longer assigned are
+        deleted, so the table mirrors the source. This is derived data, so
+        deleting a link does not conflict with never deleting tasks.
+
+        Args:
+            task_id: Task ID.
+            funcionario_ids: ``funcionarios.id`` of every assignee that resolved
+                to a registered employee; may be empty.
+        """
+        wanted = set(funcionario_ids)
+        with Session(self.engine) as session:
+            existing = set(
+                session.scalars(
+                    select(TarefaResponsavel.funcionario_id).where(
+                        TarefaResponsavel.task_id == task_id
+                    )
+                ).all()
+            )
+
+            stale = existing - wanted
+            if stale:
+                session.execute(
+                    delete(TarefaResponsavel).where(
+                        TarefaResponsavel.task_id == task_id,
+                        TarefaResponsavel.funcionario_id.in_(stale),
+                    )
+                )
+
+            for funcionario_id in sorted(wanted - existing):
+                session.add(TarefaResponsavel(task_id=task_id, funcionario_id=funcionario_id))
 
             session.commit()
 

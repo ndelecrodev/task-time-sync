@@ -21,6 +21,7 @@ from sop_pipeline.clients.postgres_client import (
     Funcionarios,
     Horas,
     TarefaEtiqueta,
+    TarefaResponsavel,
     Tarefas,
     PostgresClient,
 )
@@ -282,17 +283,60 @@ def test_unarchive_seen_tasks_clears_only_archived_rows_in_the_seen_set() -> Non
     session.commit.assert_called_once()
 
 
-# --- status_is_done is alert-only ---------------------------------------------------
+# --- completion cleared on reopen ---------------------------------------------------
 
 
-def test_upsert_task_does_not_persist_status_is_done() -> None:
-    """tarefas has no status_is_done column and upsert_task never sets one."""
-    assert "status_is_done" not in Tarefas.__table__.columns
-    task = _task().model_copy(update={"status_is_done": True})
-
+def test_upsert_task_clears_data_conclusao_when_task_is_reopened() -> None:
+    """A stale data_conclusao is overwritten with NULL when completion_date is None."""
+    existing = SimpleNamespace(task_id="ABC-1", data_conclusao=date(2026, 9, 1))
     with patched_session() as session:
-        session.scalars.return_value = _scalar_result(None)
-        _client().upsert_task(task=task, responsavel_id=7)
+        session.scalars.return_value = _scalar_result(existing)
+        _client().upsert_task(task=_task(), responsavel_id=7)
 
-    added = session.add.call_args.args[0]
-    assert not hasattr(added, "status_is_done")
+    assert existing.data_conclusao is None
+
+
+# --- sync_task_assignees -------------------------------------------------------------
+
+
+def _existing_links(session, funcionario_ids: list[int]) -> None:
+    """Make the session report these funcionario_ids as already linked."""
+    session.scalars.return_value.all.return_value = funcionario_ids
+
+
+def test_sync_task_assignees_adds_one_row_per_assignee() -> None:
+    """Two registered assignees and no existing links -> two new rows."""
+    with patched_session() as session:
+        _existing_links(session, [])
+        _client().sync_task_assignees(task_id="ABC-1", funcionario_ids=[1, 2])
+
+    added = [call.args[0] for call in session.add.call_args_list]
+    assert all(isinstance(row, TarefaResponsavel) for row in added)
+    assert [(row.task_id, row.funcionario_id) for row in added] == [("ABC-1", 1), ("ABC-1", 2)]
+    session.execute.assert_not_called()
+    session.commit.assert_called_once()
+
+
+def test_sync_task_assignees_removes_link_of_unassigned_person() -> None:
+    """An assignee removed in the source loses its row; the remaining one is kept."""
+    with patched_session() as session:
+        _existing_links(session, [1, 2])
+        _client().sync_task_assignees(task_id="ABC-1", funcionario_ids=[1])
+
+    stmt = session.execute.call_args.args[0]
+    sql = str(stmt.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+    assert sql.startswith("DELETE FROM tarefa_responsavel")
+    assert "tarefa_responsavel.task_id = 'ABC-1'" in sql
+    assert "tarefa_responsavel.funcionario_id IN (2)" in sql
+    session.add.assert_not_called()
+    session.commit.assert_called_once()
+
+
+def test_sync_task_assignees_is_idempotent_when_links_match() -> None:
+    """Links already matching the source -> nothing added or deleted."""
+    with patched_session() as session:
+        _existing_links(session, [1, 2])
+        _client().sync_task_assignees(task_id="ABC-1", funcionario_ids=[2, 1])
+
+    session.add.assert_not_called()
+    session.execute.assert_not_called()
