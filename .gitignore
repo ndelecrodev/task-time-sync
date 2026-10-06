@@ -26,3 +26,9 @@ dist/
 
 # Editor
 .vscode/
+
+#Claude
+.claude 
+.claude/
+Claude.*
+CLAUDE.*
