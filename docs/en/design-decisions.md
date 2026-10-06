@@ -311,9 +311,30 @@ it reached production.
 
 `BASE_TAREFAS` gained an `arquivada_em` column, mirroring the column of the
 same name in `tarefas` (decision 18). `ExcelWriter.mark_archived_tasks` runs
-at the end of `sync_clickup`, right after `archive_missing_tasks`, and fetches
-the already-archived tasks through `PostgresClient.get_archived_tasks` to
-write the archive date into the spreadsheet.
+at the end of `sync_clickup`, right after `archive_missing_tasks`, and writes
+the run date (in America/Sao_Paulo) into every `BASE_TAREFAS` row whose `id`
+is not in `all_ids_from_clickup` and whose `arquivada_em` is empty. A row
+that already has an archive date keeps its original date, and a row with an
+empty `id` is skipped. The number of rows archived in the spreadsheet is
+logged at INFO on the same log line as the unarchive counts.
+
+The set that drives spreadsheet archiving is `all_ids_from_clickup`, the same
+one used by `unmark_archived_tasks` and by `archive_missing_tasks` in
+Postgres. An earlier version read the archived tasks through
+`PostgresClient.get_archived_tasks` and copied their dates into the
+spreadsheet. Since `save_tasks` writes to Excel before the Postgres upsert,
+and a failed upsert is only logged so the rest of the batch still goes
+through, a task could exist in the spreadsheet without existing in `tarefas`.
+Postgres had no row to archive, so the spreadsheet row stayed active even
+after the task disappeared from ClickUp. That happened to `86e2ydc64` and
+`86e2ydcdr`, both deleted from ClickUp: the Excel dashboard counted 195
+active tasks and the web dashboard counted 193. `get_archived_tasks` was left
+with no caller and was removed.
+
+The date written to the spreadsheet comes from the pipeline's clock, while
+`archive_missing_tasks` uses the database's `now()`. Both dates match, except
+on a run between 21:00 and 24:00 in Sao Paulo, when the database's UTC date
+is already the next day.
 
 **Why:** before this change, an archived task was only flagged in Postgres;
 whoever opened the spreadsheet had no way to tell that a `BASE_TAREFAS` row
@@ -326,10 +347,7 @@ never calls `_write_task_row` or any other path that would rewrite
 `titulo`, `status`, `prazo`, or any other field on the row. This is
 deliberate: an archived task no longer receives updates from ClickUp, so its
 other fields must stay frozen at the last real value they held before the
-task dropped out of the fetch, not get overwritten or cleared. If a
-`task_id` coming from Postgres has no matching row in `BASE_TAREFAS` (it
-shouldn't, since the task was written there before being archived), the
-method skips it instead of raising.
+task dropped out of the fetch, not get overwritten or cleared.
 
 The only other write to this column is the clear:
 `ExcelWriter.unmark_archived_tasks` empties `arquivada_em` on every row whose
