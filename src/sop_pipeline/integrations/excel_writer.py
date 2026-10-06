@@ -15,6 +15,8 @@ translating them would break the lookups at runtime.
 from datetime import date
 from enum import Enum
 
+from openpyxl.utils import range_boundaries
+
 from sop_pipeline.errors.exceptions import ExcelWriteError
 from sop_pipeline.models.schemas import Task, TaskDetail, TimeEntry
 from sop_pipeline.integrations.excel_workbook import open_workbook, create_column_map
@@ -138,41 +140,57 @@ class ExcelWriter:
             raise ExcelWriteError(f"Failed to save tasks to {file_path}: {error}") from error
 
     @staticmethod
-    def mark_archived_tasks(file_path: str, archived_tasks) -> None:
-        """Write the archived date into BASE_TAREFAS for already-archived tasks.
+    def mark_archived_tasks(file_path: str, seen_task_ids: set[str], archive_date: date) -> int:
+        """Stamp BASE_TAREFAS.arquivada_em on every active row whose task was not seen.
+
+        Driven by the same set as :meth:`unmark_archived_tasks` and
+        ``PostgresClient.archive_missing_tasks``, not by what Postgres archived:
+        a row that reached the workbook but never reached Postgres (its upsert
+        failed) must still be archived once the task disappears from ClickUp.
 
         Only the arquivada_em column is touched; every other field on
         these rows keeps its last known value from before the task
-        disappeared from ClickUp, by design (see design-decisions.md).
+        disappeared from ClickUp, by design (see design-decisions.md). A row
+        that is already archived keeps its original date, and a row with an
+        empty id is skipped.
 
         Args:
             file_path: Path to the local workbook.
-            archived_tasks: Rows with task_id and arquivada_em, as
-                returned by PostgresClient.get_archived_tasks.
+            seen_task_ids: Every task_id returned by this run's ClickUp fetch.
+            archive_date: Date written into newly archived rows.
+
+        Returns:
+            int: How many rows had ``arquivada_em`` set.
 
         Raises:
             ExcelWriteError: If the workbook cannot be updated or saved.
         """
+        archived = 0
         try:
             workbook = open_workbook(file_path)
             worksheet = workbook["BASE_TAREFAS"]
             table = worksheet.tables["base_tarefas"]
             column_map = create_column_map(worksheet=worksheet, table=table)
 
-            for task in archived_tasks:
-                row = find_row(worksheet, task.task_id, table)
-                if row is None:
+            _, header_row, _, last_row = range_boundaries(table.ref)
+            for row in range(header_row + 1, last_row + 1):
+                task_id = worksheet.cell(row=row, column=column_map["id"]).value
+                if task_id in (None, "") or task_id in seen_task_ids:
                     continue
-                cell = worksheet.cell(
-                    row=row, column=column_map["arquivada_em"], value=task.arquivada_em.date()
-                )
+                cell = worksheet.cell(row=row, column=column_map["arquivada_em"])
+                if cell.value not in (None, ""):
+                    continue
+                cell.value = archive_date
                 cell.number_format = "DD/MM/YYYY"
+                archived += 1
 
             workbook.save(file_path)
         except (OSError, KeyError, ValueError) as error:
             raise ExcelWriteError(
                 f"Failed to mark archived tasks in {file_path}: {error}"
             ) from error
+
+        return archived
 
     @staticmethod
     def unmark_archived_tasks(file_path: str, seen_task_ids: set[str]) -> int:

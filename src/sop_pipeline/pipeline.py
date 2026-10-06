@@ -5,8 +5,9 @@ data, uploads it back and notifies the team about tasks approaching their
 deadline.
 """
 
-from datetime import date
+from datetime import date, datetime
 import logging
+from zoneinfo import ZoneInfo
 
 import requests
 import sentry_sdk
@@ -155,13 +156,22 @@ def sync_clickup(etl: EtlService, postgres_client: PostgresClient, name_to_id: d
         excel_unarchived = ExcelWriter.unmark_archived_tasks(
             settings.TEMP_EXCEL_PATH, all_ids_from_clickup
         )
-        ExcelWriter.mark_archived_tasks(
-            settings.TEMP_EXCEL_PATH, postgres_client.get_archived_tasks()
+        # Excel archiving is driven by the same set, not by what Postgres
+        # archived: a row whose Postgres upsert failed exists only in the
+        # workbook and would otherwise stay active there forever. The date is
+        # the run date in America/Sao_Paulo; archive_missing_tasks stamps the
+        # database's now(), so the two only differ on a run that crosses
+        # midnight UTC (21:00-24:00 in Sao Paulo).
+        excel_archived = ExcelWriter.mark_archived_tasks(
+            settings.TEMP_EXCEL_PATH,
+            all_ids_from_clickup,
+            datetime.now(ZoneInfo("America/Sao_Paulo")).date(),
         )
         logger.info(
-            "ClickUp: %s tasks unarchived in Postgres, %s in Excel",
+            "ClickUp: %s tasks unarchived in Postgres, %s in Excel; %s tasks archived in Excel",
             postgres_unarchived,
             excel_unarchived,
+            excel_archived,
         )
 
     # A discarded count well above zero means tasks are vanishing from the
