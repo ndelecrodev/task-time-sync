@@ -341,9 +341,30 @@ foi, de fato, uma versão inicial com esse bug (então com
 
 `BASE_TAREFAS` ganhou a coluna `arquivada_em`, espelhando a coluna de mesmo
 nome em `tarefas` (decisão 18). `ExcelWriter.mark_archived_tasks` roda ao
-fim de `sync_clickup`, depois de `archive_missing_tasks`, e busca as tarefas
-já arquivadas com `PostgresClient.get_archived_tasks` para escrever a data de
-arquivamento na planilha.
+fim de `sync_clickup`, depois de `archive_missing_tasks`, e escreve a data da
+execução (no fuso America/Sao_Paulo) em toda linha de `BASE_TAREFAS` cujo `id`
+não está em `all_ids_from_clickup` e cuja `arquivada_em` está vazia. Uma linha
+que já tem data de arquivamento mantém a data original, e uma linha com `id`
+vazio é ignorada. O número de linhas arquivadas na planilha é registrado em
+nível INFO na mesma linha de log dos desarquivamentos.
+
+O conjunto que decide o arquivamento na planilha é `all_ids_from_clickup`, o
+mesmo usado por `unmark_archived_tasks` e por `archive_missing_tasks` no
+Postgres. Uma versão anterior lia as tarefas arquivadas com
+`PostgresClient.get_archived_tasks` e copiava a data delas para a planilha.
+Como `save_tasks` grava no Excel antes do upsert no Postgres, e uma falha
+nesse upsert só é registrada no log para não perder o lote inteiro, uma
+tarefa podia existir na planilha sem existir em `tarefas`. O Postgres não
+tinha linha para arquivar, então a linha da planilha continuava ativa mesmo
+depois de a tarefa sumir do ClickUp. Foi o que aconteceu com `86e2ydc64` e
+`86e2ydcdr`, apagadas do ClickUp: o painel do Excel contava 195 tarefas
+ativas e o painel web contava 193. `get_archived_tasks` ficou sem uso e foi
+removido.
+
+A data escrita na planilha vem do relógio do pipeline, enquanto
+`archive_missing_tasks` usa o `now()` do banco. As duas datas coincidem,
+exceto numa execução entre 21:00 e 24:00 em São Paulo, quando a data UTC do
+banco já é o dia seguinte.
 
 **Por quê:** antes dessa mudança, uma tarefa arquivada ficava marcada só no
 Postgres; quem abrisse a planilha não tinha como saber que uma linha de
@@ -357,9 +378,7 @@ regrave `titulo`, `status`, `prazo` ou qualquer outro campo da linha. Isso é
 proposital: uma tarefa arquivada não recebe mais atualizações do ClickUp, então
 seus outros campos devem continuar congelados no último valor real que
 tinham antes de a tarefa desaparecer da busca, não serem sobrescritos ou
-zerados. Se um `task_id` vindo do Postgres não tiver linha correspondente em
-`BASE_TAREFAS` (não deveria acontecer, já que a tarefa foi escrita lá antes
-de ser arquivada), o método pula essa tarefa em vez de lançar erro.
+zerados.
 
 A única outra escrita nessa coluna é a limpeza:
 `ExcelWriter.unmark_archived_tasks` apaga o valor de `arquivada_em` de toda
