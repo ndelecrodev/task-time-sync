@@ -28,7 +28,7 @@ dist/
 .vscode/
 
 #Claude
-.claude 
+.claude
 .claude/
 Claude.*
 CLAUDE.*

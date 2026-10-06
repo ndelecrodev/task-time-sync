@@ -172,8 +172,9 @@ class ExcelWriter:
             table = worksheet.tables["base_tarefas"]
             column_map = create_column_map(worksheet=worksheet, table=table)
 
-            for row in range(2, range_boundaries(table.ref)[3] + 1):
-                task_id = worksheet.cell(row=row, column=1).value
+            _, header_row, _, last_row = range_boundaries(table.ref)
+            for row in range(header_row + 1, last_row + 1):
+                task_id = worksheet.cell(row=row, column=column_map["id"]).value
                 if task_id in (None, "") or task_id in seen_task_ids:
                     continue
                 cell = worksheet.cell(row=row, column=column_map["arquivada_em"])
