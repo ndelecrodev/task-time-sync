@@ -7,6 +7,7 @@ not abort the loop or skip the Excel write (scenario #12).
 """
 
 import logging
+from datetime import date
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -143,6 +144,34 @@ def test_sync_clickup_unarchives_reappearing_task_that_failed_validation(
     saved = [task.task_id for task in excel.save_tasks.call_args.kwargs["tasks"]]
     assert saved == ["ABC-1"]
     assert "1 tasks unarchived in Postgres, 1 in Excel" in caplog.text
+
+
+def test_sync_clickup_archives_excel_from_clickup_ids_not_postgres(
+    etl_service, make_clickup_task, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Excel archiving gets the ClickUp id set and a run date, never Postgres rows.
+
+    Regression for the 195 (Excel) vs 193 (Postgres) active-task count: driving
+    Excel archiving from Postgres left Excel-only rows active forever.
+    """
+    tasks = [make_clickup_task(task_id="ABC-1"), make_clickup_task(task_id="ABC-2")]
+    postgres_client = MagicMock()
+    postgres_client.unarchive_seen_tasks.return_value = 0
+
+    with (
+        patch("sop_pipeline.pipeline.ClickUpClient") as clickup_cls,
+        patch("sop_pipeline.pipeline.ExcelWriter") as excel,
+        caplog.at_level(logging.INFO, logger=PIPELINE_LOGGER),
+    ):
+        clickup_cls.return_value.fetch_tasks.return_value = tasks
+        excel.unmark_archived_tasks.return_value = 0
+        excel.mark_archived_tasks.return_value = 2
+        sync_clickup(etl_service, postgres_client, {})
+
+    args = excel.mark_archived_tasks.call_args.args
+    assert args[1] == {"ABC-1", "ABC-2"}
+    assert isinstance(args[2], date)
+    assert "2 tasks archived in Excel" in caplog.text
 
 
 def test_sync_clickup_skips_archiving_when_in_scope_fetch_is_empty(
