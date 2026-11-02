@@ -19,6 +19,6 @@ jobs:
       pull-requests: write
     steps:
       - name: Label the PR from its branch name
-        uses: actions/labeler@v5
+        uses: actions/labeler@v7
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
