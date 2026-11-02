@@ -15,3 +15,5 @@
 
 # Marcar arquivos binários
 *.xlsx binary
+.editorconfig eol=lf
+CODEOWNERS eol=lf
