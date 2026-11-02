@@ -1,0 +1,22 @@
+name: Release Drafter
+
+# Release Drafter reads .github/release-drafter.yml from the default branch, so
+# it only runs once a change lands on main. Running it on pull requests would
+# fail until the config file reaches main. PR labels come from pr-labeler.yml.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  update-release-draft:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Draft the release notes
+        uses: release-drafter/release-drafter@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
