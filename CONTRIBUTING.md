@@ -77,7 +77,9 @@ Boa parte do "porquê" do código está em [`docs/design-decisions.md`](docs/des
 
 ## Releases
 
-As notas de release são montadas automaticamente quando uma mudança chega à `main` (Release Drafter), a partir do título e do rótulo das PRs. Para publicar, abra o rascunho em *Releases*, confira a versão proposta e clique em *Publish release*. Use o rótulo `skip-changelog` numa PR para deixá-la de fora das notas, e `breaking` ou `major` para subir a versão maior.
+Cada PR da `develop` para a `main` gera um release automaticamente (Release Drafter): a tag e a versão são calculadas pelos rótulos das PRs e as notas vêm dos títulos delas. Não é preciso publicar nada à mão. `feature` sobe a versão minor, `fix` e os demais sobem a patch, e uma PR sem rótulo conta como patch. Use `breaking` ou `major` para subir a versão maior e `skip-changelog` para deixar uma PR de fora das notas.
+
+Para um release com notas escritas à mão, edite o texto do release depois de publicado. O Release Drafter reescreve apenas rascunhos, e não mexe num release já publicado.
 
 O Release Drafter lê a configuração da branch padrão, então ele só passa a funcionar depois que `.github/release-drafter.yml` chega à `main`.
 
