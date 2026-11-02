@@ -16,7 +16,12 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Draft the release notes
+      # publish: true creates the tag and publishes the release on every push to
+      # main. Each develop -> main promotion is one release, with the version
+      # resolved from the PR labels (see release-drafter.yml).
+      - name: Draft and publish the release
         uses: release-drafter/release-drafter@v7
+        with:
+          publish: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
