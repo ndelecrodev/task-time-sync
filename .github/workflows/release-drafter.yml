@@ -1,0 +1,26 @@
+name: Release Drafter
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, reopened, synchronize, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  update-release-draft:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      # On pull requests only the autolabeler runs; the draft itself is
+      # rebuilt when a change lands on main.
+      - name: Draft the release notes and label the PR
+        uses: release-drafter/release-drafter@v6
+        with:
+          disable-releaser: ${{ github.ref != 'refs/heads/main' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,60 @@
+name-template: "v$RESOLVED_VERSION"
+tag-template: "v$RESOLVED_VERSION"
+change-template: "- $TITLE (#$NUMBER) @$AUTHOR"
+change-title-escapes: '\<*_&'
+no-changes-template: "- Sem mudanças nesta versão."
+
+template: |
+  ## O que mudou
+
+  $CHANGES
+
+  **Comparação completa:** https://github.com/$OWNER/$REPOSITORY/compare/$PREVIOUS_TAG...v$RESOLVED_VERSION
+
+categories:
+  - title: "Novidades"
+    labels: [feature, enhancement]
+  - title: "Correções"
+    labels: [fix, bug]
+  - title: "Refatoração"
+    labels: [refactor]
+  - title: "Documentação"
+    labels: [documentation]
+  - title: "Testes"
+    labels: [test]
+  - title: "Infra e dependências"
+    labels: [chore, dependencies, ci]
+
+exclude-labels:
+  - skip-changelog
+
+version-resolver:
+  major:
+    labels: [major, breaking]
+  minor:
+    labels: [feature, enhancement]
+  patch:
+    labels: [fix, bug, refactor, documentation, test, chore, dependencies, ci]
+  default: patch
+
+autolabeler:
+  - label: feature
+    branch: ['/^feat(ure)?\//']
+    title: ['/^feat/i']
+  - label: fix
+    branch: ['/^fix\//']
+    title: ['/^fix/i']
+  - label: refactor
+    branch: ['/^refactor\//']
+    title: ['/^refactor/i']
+  - label: documentation
+    branch: ['/^docs\//']
+    title: ['/^docs?/i']
+  - label: test
+    branch: ['/^test\//']
+    title: ['/^test/i']
+  - label: chore
+    branch: ['/^chore\//']
+    title: ['/^chore/i']
+  - label: dependencies
+    branch: ['/^dependabot\//']
