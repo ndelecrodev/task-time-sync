@@ -1,9 +1,10 @@
 name: PR Labeler
 
-# pull_request_target runs the workflow and the config from the base branch and
-# never checks out the PR code, so it is safe to give it write access.
+# Runs on pull_request so it works for PRs into develop, not only into the
+# default branch. Dependabot PRs get a read-only token and are labeled by
+# dependabot.yml instead, so they are skipped here.
 on:
-  pull_request_target:
+  pull_request:
     types: [opened, reopened, synchronize]
 
 permissions:
@@ -11,6 +12,7 @@ permissions:
 
 jobs:
   label:
+    if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     permissions:
       contents: read
