@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentação
+    url: https://ndelecrodev.github.io/task-time-sync-docs/
+    about: Arquitetura, modelo de dados e decisões de design.
+  - name: Reportar vulnerabilidade
+    url: https://github.com/ndelecrodev/task-time-sync/security/advisories/new
+    about: Falhas de segurança devem ser reportadas em privado, não em issues.
