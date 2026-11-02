@@ -28,12 +28,12 @@ pre-commit install --hook-type pre-push
 feat/*  fix/*  refactor/*  docs/*  test/*  chore/*
         │
         ▼ pull request
-     develop ──▶ release ──▶ main
+     develop ──▶ main
 ```
 
 1. Parta da `develop` atualizada e crie uma branch com prefixo do tipo: `feat/`, `fix/`, `refactor/`, `docs/`, `test/` ou `chore/`.
 2. Faça commits pequenos, em inglês e no imperativo, por exemplo `Archive Excel rows from the ClickUp id set instead of Postgres`.
-3. Abra a pull request para a `develop`. A promoção segue `develop` → `release` → `main`, sempre por pull request.
+3. Abra a pull request para a `develop`. Quando a `develop` estiver estável, abra uma pull request da `develop` para a `main`. Nada vai direto para a `main`, e tudo passa por pull request.
 
 O prefixo da branch define o rótulo automático da PR e, com ele, a categoria das notas de release.
 
