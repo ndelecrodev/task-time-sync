@@ -1,0 +1,24 @@
+name: PR Labeler
+
+# Runs on pull_request so it works for PRs into develop, not only into the
+# default branch. Dependabot PRs get a read-only token and are labeled by
+# dependabot.yml instead, so they are skipped here.
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  label:
+    if: github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Label the PR from its branch name
+        uses: actions/labeler@v5
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
