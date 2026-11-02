@@ -1,0 +1,65 @@
+name: Relatório de bug
+description: Algo no pipeline não funcionou como o esperado
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Obrigado por reportar. Quanto mais contexto, mais rápido a correção.
+
+        **Não cole tokens, chaves de API, webhooks nem o conteúdo do `.env`.**
+        Se um log tiver algum desses valores, apague-os antes de colar.
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Em qual etapa aconteceu?
+      options:
+        - Download ou upload da planilha (Backblaze B2)
+        - Sincronização de colaboradores (DIM_FUNCIONARIO)
+        - ClickUp (tarefas)
+        - Clockify (horas)
+        - Alertas no Teams
+        - Postgres
+        - Planilha (fórmulas, abas ou indicadores)
+        - Não sei
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: O que aconteceu?
+      description: Descreva o comportamento observado.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: O que era esperado?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Como reproduzir
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs ou mensagem de erro
+      description: Cole o trecho relevante, sem segredos.
+      render: shell
+    validations:
+      required: false
+  - type: input
+    id: run
+    attributes:
+      label: Link da execução no GitHub Actions
+      description: Se o problema apareceu numa execução agendada ou manual.
+      placeholder: https://github.com/ndelecrodev/task-time-sync/actions/runs/...
+    validations:
+      required: false

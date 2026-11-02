@@ -1,0 +1,41 @@
+name: Sugestão de melhoria
+description: Proponha uma funcionalidade ou uma mudança de comportamento
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Qual problema isso resolve?
+      description: Explique a necessidade antes da solução.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Qual é a proposta?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternativas consideradas
+    validations:
+      required: false
+  - type: checkboxes
+    id: impact
+    attributes:
+      label: O que isso toca?
+      options:
+        - label: Regra de alerta ou canais do Teams
+        - label: Estrutura da planilha (abas, colunas ou fórmulas)
+        - label: Schema do Postgres
+        - label: Integração com ClickUp ou Clockify
+        - label: Configuração (`.env` ou secrets)
+  - type: textarea
+    id: context
+    attributes:
+      label: Contexto adicional
+      description: Se contradiz uma decisão de `docs/design-decisions.md`, cite qual.
+    validations:
+      required: false

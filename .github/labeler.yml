@@ -1,0 +1,16 @@
+# Labels applied from the branch prefix. The names match the categories in
+# release-drafter.yml, so the release notes group each PR correctly.
+feature:
+  - head-branch: ['^feat/', '^feature/']
+fix:
+  - head-branch: ['^fix/', '^hotfix/']
+refactor:
+  - head-branch: ['^refactor/']
+documentation:
+  - head-branch: ['^docs/']
+test:
+  - head-branch: ['^test/']
+chore:
+  - head-branch: ['^chore/', '^ci/', '^build/']
+dependencies:
+  - head-branch: ['^dependabot/']
