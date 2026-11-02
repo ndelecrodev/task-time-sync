@@ -428,6 +428,8 @@ As credenciais usadas em produção (ClickUp, Clockify, Postgres, B2, Teams e ob
 
 ## Segurança
 
+Para reportar uma vulnerabilidade, siga a [política de segurança](SECURITY.md).
+
 | Medida | Como funciona |
 |---|---|
 | **Segredos fora do código** | Tudo vem do ambiente (`.env` local ou *secrets* do GitHub Actions), lido num único ponto: `Settings` |
@@ -474,8 +476,10 @@ gitGraph
 
 1. Parta da `develop` atualizada e crie uma branch com prefixo do tipo: `feat/`, `fix/`, `refactor/`, `docs/`, `test/` ou `chore/`.
 2. Escreva os commits em inglês, no imperativo, por exemplo `Archive Excel rows from the ClickUp id set instead of Postgres`.
-3. Rode `black`, `pylint` e `pytest` antes de abrir a PR; são os mesmos checks da CI.
-4. Abra a PR para a `develop`. A promoção segue `develop` → `release` → `main`, sempre por pull request.
+3. Rode `black`, `pylint` e `pytest` antes de abrir a PR; são os mesmos checks da CI. Os hooks do [pre-commit](.pre-commit-config.yaml) fazem isso por você.
+4. Abra a PR para a `develop` com um título no padrão [Conventional Commits](https://www.conventionalcommits.org/pt-br/), como `feat(alerts): add a window for medium priority`; uma checagem da CI valida o título. A promoção segue `develop` → `release` → `main`, sempre por pull request.
+
+O passo a passo completo está no [`CONTRIBUTING.md`](CONTRIBUTING.md). Para reportar uma falha de segurança, leia o [`SECURITY.md`](SECURITY.md) e use o relato privado, nunca uma issue pública.
 
 > [!TIP]
 > Antes de mexer numa regra de negócio, procure a decisão correspondente em [`docs/design-decisions.md`](docs/design-decisions.md). Boa parte do "porquê" está lá, e uma mudança que contradiz uma decisão deve atualizá-la.
