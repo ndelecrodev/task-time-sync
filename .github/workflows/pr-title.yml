@@ -2,10 +2,10 @@ name: PR Title
 
 # The title is what the release notes show, so it follows Conventional Commits:
 #   type(optional scope): lowercase description
-# Runs on pull_request_target because it only reads the title and never checks
-# out the PR code.
+# Runs on pull_request so it works for PRs into develop, not only into the
+# default branch. It only reads the title and needs no write access.
 on:
-  pull_request_target:
+  pull_request:
     types: [opened, edited, synchronize, reopened]
 
 permissions:
