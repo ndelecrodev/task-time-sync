@@ -1,5 +1,7 @@
 ## O que muda
 
+<!-- O título da PR segue Conventional Commits: tipo(escopo opcional): descrição em minúsculas.
+     Exemplo: feat(alerts): add a window for medium priority -->
 <!-- Descreva a mudança em poucas linhas e o motivo dela. -->
 
 ## Tipo de mudança

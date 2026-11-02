@@ -35,7 +35,31 @@ feat/*  fix/*  refactor/*  docs/*  test/*  chore/*
 2. Faça commits pequenos, em inglês e no imperativo, por exemplo `Archive Excel rows from the ClickUp id set instead of Postgres`.
 3. Abra a pull request para a `develop`. A promoção segue `develop` → `release` → `main`, sempre por pull request.
 
-O prefixo da branch (ou o início do título da PR) define o rótulo automático da PR e, com ele, a categoria das notas de release.
+O prefixo da branch define o rótulo automático da PR e, com ele, a categoria das notas de release.
+
+## Título da pull request
+
+O título da PR segue o padrão [Conventional Commits](https://www.conventionalcommits.org/pt-br/), e uma checagem da CI recusa títulos fora dele:
+
+```
+tipo(escopo opcional): descrição em minúsculas
+```
+
+| Tipo | Quando usar |
+|---|---|
+| `feat` | Funcionalidade nova |
+| `fix` | Correção de bug |
+| `docs` | Só documentação |
+| `refactor` | Muda o código sem mudar o comportamento |
+| `perf` | Melhora de desempenho |
+| `test` | Testes |
+| `style` | Formatação, sem mudar lógica |
+| `build` | Dependências e empacotamento |
+| `ci` | Workflows e automação |
+| `chore` | Manutenção que não cabe nas outras |
+| `revert` | Desfaz uma mudança anterior |
+
+Exemplos: `feat(alerts): add a window for medium priority`, `fix: keep reopened tasks out of the completed count`, `docs: rewrite the README`.
 
 ## Antes de abrir a PR
 
@@ -53,7 +77,9 @@ Boa parte do "porquê" do código está em [`docs/design-decisions.md`](docs/des
 
 ## Releases
 
-As notas de release são montadas automaticamente a partir das PRs mergeadas na `main` (Release Drafter). Para publicar, abra o rascunho em *Releases*, confira a versão proposta e clique em *Publish release*. Use o rótulo `skip-changelog` numa PR para deixá-la de fora das notas, e `breaking` ou `major` para subir a versão maior.
+As notas de release são montadas automaticamente quando uma mudança chega à `main` (Release Drafter), a partir do título e do rótulo das PRs. Para publicar, abra o rascunho em *Releases*, confira a versão proposta e clique em *Publish release*. Use o rótulo `skip-changelog` numa PR para deixá-la de fora das notas, e `breaking` ou `major` para subir a versão maior.
+
+O Release Drafter lê a configuração da branch padrão, então ele só passa a funcionar depois que `.github/release-drafter.yml` chega à `main`.
 
 ## Segredos
 
